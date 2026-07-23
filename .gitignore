@@ -1,0 +1,9 @@
+# Ignore temporary directories and build artifacts
+jobs/
+samples/
+.pytest_cache/
+*.pyc
+__pycache__/
+*.egg-info/
+task.zip
+*.log
