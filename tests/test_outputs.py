@@ -4,7 +4,9 @@ Fully covers parsers, unit conversions, damping regime classifications,
 evidence precedence resolution, and deterministic report generation.
 """
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -206,8 +208,8 @@ def test_precedence_tier_2_container_oom():
     assert "Resource Limit Exhaustion" in res["root_cause"]
 
 
-def test_deterministic_json_report():
-    """Verify that generated JSON diagnostic reports are completely deterministic."""
+def test_deterministic_json_report_and_values():
+    """Verify that generated JSON diagnostic reports are key-sorted and value-accurate."""
     spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
     trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
     valgrind = ValgrindSummary(filepath="valgrind.txt")
@@ -217,10 +219,29 @@ def test_deterministic_json_report():
     json_1 = serialize_report_to_json(report)
     json_2 = serialize_report_to_json(report)
 
+    # 1. Assert complete string identity
     assert json_1 == json_2
-    assert "apptainer_spec_summary" in report
-    assert "solver_stability_summary" in report
-    assert "valgrind_summary" in report
-    assert "gdb_summary" in report
-    assert "precedence_analysis" in report
-    assert "risk_scores" in report
+
+    # 2. Assert key-sorting at top level
+    parsed = json.loads(json_1)
+    assert list(parsed.keys()) == sorted(parsed.keys())
+
+    # 3. Assert value correctness
+    assert parsed["risk_scores"]["risk_level"] == "LOW"
+    assert parsed["solver_stability_summary"]["converged"] is True
+    assert parsed["precedence_analysis"]["precedence_tier"] == 5
+
+
+def test_setuptools_packaging_and_cli_entrypoint():
+    """Verify setuptools package installation and apptainer-diag CLI entrypoint execution."""
+    solution_dir = str(Path(__file__).parent.parent / "solution")
+    assert os.path.exists(os.path.join(solution_dir, "setup.py"))
+
+    # Test CLI invocation module fallback or installed script
+    res = subprocess.run(
+        [sys.executable, "-m", "apptainer_diag.cli", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "apptainer" in res.stdout.lower() or "groundwater" in res.stdout.lower()
