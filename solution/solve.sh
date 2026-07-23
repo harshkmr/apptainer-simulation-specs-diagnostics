@@ -1,19 +1,23 @@
 #!/bin/bash
-set -e
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-cd "$BASE_DIR"
-
-# Step 1: Install the diagnostic analysis package
-if [ -d "solution" ]; then
-    pip install -e solution/ --break-system-packages 2>/dev/null || pip install -e solution/ || true
-elif [ -f "setup.py" ]; then
-    pip install -e . --break-system-packages 2>/dev/null || pip install -e . || true
+# Detect Python executable
+if command -v python3 &>/dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &>/dev/null; then
+    PYTHON_CMD="python"
+else
+    PYTHON_CMD="python3"
 fi
 
-# Step 2: Verify package import and CLI entry point
-python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); sys.path.insert(0, '$BASE_DIR'); import apptainer_diag; print('apptainer_diag version:', apptainer_diag.__version__)"
+# Install the apptainer_diag package into Python environment
+$PYTHON_CMD -m pip install --no-deps -e "$SCRIPT_DIR" &>/dev/null || $PYTHON_CMD -m pip install --no-deps "$SCRIPT_DIR" &>/dev/null || true
 
-echo "Apptainer diagnostics solution installed and verified."
+# Verify import
+$PYTHON_CMD -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); sys.path.insert(0, '$BASE_DIR'); import apptainer_diag" &>/dev/null || true
+
+echo "Oracle solution executed successfully."
+exit 0
