@@ -1,4 +1,4 @@
-Process and analyze diagnostic log data from groundwater simulation execution runs, Apptainer container specifications, Valgrind memory profiles, and GDB crash dumps. Build an offline data processing pipeline (`apptainer_diag`) packaged via `setuptools` with CLI entrypoint `apptainer-diag`.
+Diagnose and analyze numerical instability bugs, GDB crash backtraces, Valgrind memory corruption summaries, and Apptainer container resource exhaustion specs for simulation execution runs. Build an offline Python diagnostic debugging utility (`apptainer_diag`) packaged via `setuptools` with CLI entrypoint `apptainer-diag`.
 
 ### Key Requirements
 
@@ -6,7 +6,7 @@ Process and analyze diagnostic log data from groundwater simulation execution ru
    - Package the project using `setuptools` in `solution/setup.py` exposing console script entrypoint `apptainer-diag` mapping to `apptainer_diag.cli:main`.
    - The CLI must accept `--spec`, `--residuals`, `--valgrind`, `--gdb`, and `--output <json_path>` (defaulting to `report.json` if omitted, or printing to stdout if explicitly configured).
 
-2. **Diagnostic Log Data Parsers**:
+2. **Diagnostic File Log Parsers**:
    - Parse container spec resource limits, environment variables, and labels from `.def`, `.spec`, or `.json` files.
    - Parse solver residual iterations from key-value or CSV logs, detecting NaN/Inf values and convergence/divergence statuses.
    - Parse Valgrind heap memory leak byte counts, invalid reads/writes, invalid frees, and error summaries. Flag critical memory corruption if invalid writes or invalid frees occur.
