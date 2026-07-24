@@ -77,6 +77,25 @@ CONVERGED
         os.remove(path)
 
 
+def test_parse_solver_residuals_nan_inf_log_file():
+    content = """
+Iter 1: dt=1.0s res_head=1.0m res_flux=0.1m3/s norm_ratio=1.0
+Iter 2: dt=1.0s res_head=nan res_flux=inf norm_ratio=nan
+DIVERGED
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".log") as f:
+        f.write(content)
+        path = f.name
+
+    try:
+        trace = parse_solver_residuals(path)
+        assert trace.diverged is True
+        assert len(trace.records) == 2
+        assert trace.records[1].is_nan is True or trace.records[1].is_inf is True
+    finally:
+        os.remove(path)
+
+
 def test_parse_valgrind_summary():
     content = """
 ==999== LEAK SUMMARY:

@@ -6,6 +6,7 @@ evidence precedence resolution, component risk scores, and CLI end-to-end execut
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,8 +66,8 @@ From: ubuntu:22.04
         os.remove(temp_path)
 
 
-def test_solver_residuals_keyvalue_and_csv_parsing():
-    """Verify solver residual parsing for both key-value and CSV format logs."""
+def test_solver_residuals_keyvalue_csv_and_nan_parsing():
+    """Verify solver residual parsing for key-value, CSV, and NaN/Inf log content."""
     content_csv = """# N, dt, res_head, res_flux, norm_ratio
 1, 1.0, 0.5, 0.05, 0.5
 2, 1.0, 0.05, 0.005, 0.05
@@ -84,6 +85,25 @@ CONVERGED
     finally:
         os.remove(temp_path)
 
+    content_nan = """
+Iter 1: dt=1.0s res_head=1.0m res_flux=0.1m3/s norm_ratio=1.0
+Iter 2: dt=1.0s res_head=nan res_flux=inf norm_ratio=nan
+DIVERGED
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".log") as f:
+        f.write(content_nan)
+        temp_path_nan = f.name
+
+    try:
+        trace_nan = parse_solver_residuals(temp_path_nan)
+        assert trace_nan.diverged is True
+        assert len(trace_nan.records) == 2
+        assert (
+            trace_nan.records[1].is_nan is True or trace_nan.records[1].is_inf is True
+        )
+    finally:
+        os.remove(temp_path_nan)
+
 
 def test_unit_conversions():
     """Verify physical unit conversions to SI base units (m, m3/s, m/s, s)."""
@@ -93,9 +113,10 @@ def test_unit_conversions():
     assert abs(convert_head_to_meters(1.0, "bar") - 10.1972) < 1e-3
     assert abs(convert_head_to_meters(1.0, "psi") - 0.70307) < 1e-4
 
-    # Volumetric Flux -> m3/s
+    # Volumetric Flux -> m3/s (testing gpm, cfs, m3/d, m3/day, L/min)
     assert abs(convert_flux_to_m3_per_sec(15850.32, "gpm") - 1.0) < 1e-4
     assert abs(convert_flux_to_m3_per_sec(1.0, "cfs") - 0.0283168) < 1e-6
+    assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/d") - 1.0) < 1e-5
     assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/day") - 1.0) < 1e-5
     assert abs(convert_flux_to_m3_per_sec(60000.0, "L/min") - 1.0) < 1e-5
 
@@ -436,22 +457,39 @@ def test_cli_end_to_end_pipeline_execution():
                 "Program received signal SIGFPE, Arithmetic exception.\n#0 0x401000 in solve ()\n"
             )
 
-        # Execute CLI end-to-end
-        cmd = [
-            sys.executable,
-            "-m",
-            "apptainer_diag.cli",
-            "--spec",
-            spec_p,
-            "--residuals",
-            res_p,
-            "--valgrind",
-            val_p,
-            "--gdb",
-            gdb_p,
-            "--output",
-            out_p,
-        ]
+        # Test both console_scripts executable entrypoint (if installed) and python module invocation
+        cli_executable = shutil.which("apptainer-diag")
+        if cli_executable:
+            cmd = [
+                cli_executable,
+                "--spec",
+                spec_p,
+                "--residuals",
+                res_p,
+                "--valgrind",
+                val_p,
+                "--gdb",
+                gdb_p,
+                "--output",
+                out_p,
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                "-m",
+                "apptainer_diag.cli",
+                "--spec",
+                spec_p,
+                "--residuals",
+                res_p,
+                "--valgrind",
+                val_p,
+                "--gdb",
+                gdb_p,
+                "--output",
+                out_p,
+            ]
+
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
         assert res.returncode == 0

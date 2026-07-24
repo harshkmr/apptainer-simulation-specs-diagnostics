@@ -31,6 +31,7 @@ def test_unit_conversions():
     # Flux conversions
     assert abs(convert_flux_to_m3_per_sec(15850.32, "gpm") - 1.0) < 1e-4
     assert abs(convert_flux_to_m3_per_sec(1.0, "cfs") - 0.0283168) < 1e-6
+    assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/d") - 1.0) < 1e-5
     assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/day") - 1.0) < 1e-5
     assert abs(convert_flux_to_m3_per_sec(60000.0, "L/min") - 1.0) < 1e-5
 
