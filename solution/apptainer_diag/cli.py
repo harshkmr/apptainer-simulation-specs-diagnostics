@@ -30,7 +30,11 @@ def main():
         "--gdb", type=str, help="Path to GDB backtrace dump file", default=""
     )
     parser.add_argument(
-        "--output", "-o", type=str, help="Path to output JSON report file", default=""
+        "--output",
+        "-o",
+        type=str,
+        help="Path to output JSON report file",
+        default="report.json",
     )
 
     args = parser.parse_args()
@@ -41,10 +45,9 @@ def main():
     gdb = parse_gdb_backtrace(args.gdb)
 
     report = generate_diagnostic_report(spec, trace, valgrind, gdb)
-    json_out = serialize_report_to_json(report, args.output if args.output else None)
-
-    if not args.output:
-        print(json_out)
+    output_target = args.output if args.output else "report.json"
+    json_out = serialize_report_to_json(report, output_target)
+    print(json_out)
 
 
 if __name__ == "__main__":

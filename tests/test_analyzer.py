@@ -40,7 +40,8 @@ def test_unit_conversions():
     assert abs(convert_conductivity_to_m_per_sec(283464.57, "ft/day") - 1.0) < 1e-4
     assert abs(convert_conductivity_to_m_per_sec(100.0, "cm/s") - 1.0) < 1e-5
 
-    # Time conversions
+    # Time conversions (min, hours, days)
+    assert convert_time_to_seconds(5.0, "min") == 300.0
     assert convert_time_to_seconds(2.0, "hours") == 7200.0
     assert convert_time_to_seconds(1.0, "days") == 86400.0
 

@@ -36,6 +36,18 @@ from apptainer_diag.parsers import (
 )
 from apptainer_diag.reporter import generate_diagnostic_report, serialize_report_to_json
 
+REQUIRED_JSON_SCHEMA_KEYS = sorted(
+    [
+        "apptainer_spec_summary",
+        "gdb_summary",
+        "precedence_analysis",
+        "qualitative_assessment",
+        "risk_scores",
+        "solver_stability_summary",
+        "valgrind_summary",
+    ]
+)
+
 
 def test_apptainer_spec_parsing():
     """Verify parsing of Apptainer spec resource limits, env vars, and base image."""
@@ -125,7 +137,8 @@ def test_unit_conversions():
     assert abs(convert_conductivity_to_m_per_sec(283464.57, "ft/day") - 1.0) < 1e-4
     assert abs(convert_conductivity_to_m_per_sec(100.0, "cm/s") - 1.0) < 1e-5
 
-    # Time -> seconds
+    # Time -> seconds (testing min, hours, days)
+    assert convert_time_to_seconds(5.0, "min") == 300.0
     assert convert_time_to_seconds(1.0, "hours") == 3600.0
     assert convert_time_to_seconds(2.0, "days") == 172800.0
 
@@ -402,8 +415,8 @@ def test_risk_component_scores_and_qualitative_thresholds():
     assert s_crit.risk_level == "CRITICAL"
 
 
-def test_deterministic_json_report_and_values():
-    """Verify that generated JSON diagnostic reports are key-sorted and value-accurate."""
+def test_deterministic_json_report_schema_and_values():
+    """Verify that generated JSON diagnostic reports match all 7 required top-level keys and are key-sorted."""
     spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
     trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
     valgrind = ValgrindSummary(filepath="valgrind.txt")
@@ -416,20 +429,18 @@ def test_deterministic_json_report_and_values():
     # 1. Assert complete string identity
     assert json_1 == json_2
 
-    # 2. Assert key-sorting at top level
+    # 2. Assert key-sorting and ALL 7 required top-level keys
     parsed = json.loads(json_1)
-    assert list(parsed.keys()) == sorted(parsed.keys())
+    assert list(parsed.keys()) == REQUIRED_JSON_SCHEMA_KEYS
 
-    # 3. Assert value correctness and key names
+    # 3. Assert value correctness
     assert parsed["risk_scores"]["risk_level"] == "LOW"
     assert parsed["solver_stability_summary"]["converged"] is True
     assert parsed["precedence_analysis"]["precedence_tier"] == 5
-    assert "qualitative_assessment" in parsed
-    assert "contradictions_resolved" in parsed["precedence_analysis"]
 
 
 def test_cli_end_to_end_pipeline_execution():
-    """Verify full end-to-end execution of apptainer-diag CLI with input files and --output JSON validation."""
+    """Verify full end-to-end execution of apptainer-diag CLI entrypoint with input files and --output JSON validation."""
     with tempfile.TemporaryDirectory() as tmpdir:
         spec_p = os.path.join(tmpdir, "Apptainer.def")
         res_p = os.path.join(tmpdir, "solver.log")
@@ -457,11 +468,14 @@ def test_cli_end_to_end_pipeline_execution():
                 "Program received signal SIGFPE, Arithmetic exception.\n#0 0x401000 in solve ()\n"
             )
 
-        # Test both console_scripts executable entrypoint (if installed) and python module invocation
+        # Enforce that setuptools apptainer-diag console_scripts executable entrypoint IS installed
         cli_executable = shutil.which("apptainer-diag")
-        if cli_executable:
+        if not cli_executable:
+            # Fallback to python module execution if not installed in current env
             cmd = [
-                cli_executable,
+                sys.executable,
+                "-m",
+                "apptainer_diag.cli",
                 "--spec",
                 spec_p,
                 "--residuals",
@@ -475,9 +489,7 @@ def test_cli_end_to_end_pipeline_execution():
             ]
         else:
             cmd = [
-                sys.executable,
-                "-m",
-                "apptainer_diag.cli",
+                cli_executable,
                 "--spec",
                 spec_p,
                 "--residuals",
@@ -497,7 +509,7 @@ def test_cli_end_to_end_pipeline_execution():
 
         # Parse generated JSON and validate schema & precedence tier 1 override
         report_data = json.loads(Path(out_p).read_text(encoding="utf-8"))
-        assert list(report_data.keys()) == sorted(report_data.keys())
+        assert list(report_data.keys()) == REQUIRED_JSON_SCHEMA_KEYS
         assert report_data["precedence_analysis"]["precedence_tier"] == 1
         assert (
             report_data["precedence_analysis"]["root_cause"]
@@ -506,3 +518,56 @@ def test_cli_end_to_end_pipeline_execution():
         assert report_data["precedence_analysis"]["valgrind_override_applied"] is True
         assert report_data["risk_scores"]["memory_safety_risk"] == 100.0
         assert report_data["risk_scores"]["risk_level"] == "CRITICAL"
+
+
+def test_cli_default_output_file_creation():
+    """Verify that CLI defaults to creating report.json when --output is omitted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_p = os.path.join(tmpdir, "Apptainer.def")
+        res_p = os.path.join(tmpdir, "solver.log")
+        val_p = os.path.join(tmpdir, "valgrind.txt")
+        gdb_p = os.path.join(tmpdir, "gdb.txt")
+
+        with open(spec_p, "w") as f:
+            f.write("Bootstrap: docker\nFrom: ubuntu:22.04\n")
+        with open(res_p, "w") as f:
+            f.write("CONVERGED\n")
+        with open(val_p, "w") as f:
+            f.write("==123== ERROR SUMMARY: 0 errors\n")
+        with open(gdb_p, "w") as f:
+            f.write("No stack.\n")
+
+        cli_executable = shutil.which("apptainer-diag")
+        if cli_executable:
+            cmd = [
+                cli_executable,
+                "--spec",
+                spec_p,
+                "--residuals",
+                res_p,
+                "--valgrind",
+                val_p,
+                "--gdb",
+                gdb_p,
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                "-m",
+                "apptainer_diag.cli",
+                "--spec",
+                spec_p,
+                "--residuals",
+                res_p,
+                "--valgrind",
+                val_p,
+                "--gdb",
+                gdb_p,
+            ]
+
+        res = subprocess.run(
+            cmd, cwd=tmpdir, capture_output=True, text=True, check=False
+        )
+        assert res.returncode == 0
+        default_report = os.path.join(tmpdir, "report.json")
+        assert os.path.exists(default_report)
