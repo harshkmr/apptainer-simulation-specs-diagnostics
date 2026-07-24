@@ -242,6 +242,7 @@ def test_setuptools_packaging_and_cli_entrypoint():
         [sys.executable, "-m", "apptainer_diag.cli", "--help"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert res.returncode == 0
     assert "apptainer" in res.stdout.lower() or "groundwater" in res.stdout.lower()

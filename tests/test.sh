@@ -13,15 +13,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Install solution package
-pip install --no-deps -e "$BASE_DIR/solution" &>/dev/null || true
-
-# Run pytest across all test files in tests/ directory
+# Run pytest across all test files in tests/ directory via PYTHONPATH
 PYTHONPATH="$BASE_DIR/solution:$BASE_DIR:${PYTHONPATH:-}" python3 -m pytest \
   --ctrf "$VERIFIER_LOG_DIR/ctrf.json" "$SCRIPT_DIR" -rA
 RC=$?
 
-# Write reward file to writeable log directory
 if [ "$RC" -eq 0 ]; then
     echo 1 > "$VERIFIER_LOG_DIR/reward.txt" 2>/dev/null || true
 else
