@@ -1,7 +1,7 @@
 # 🚀 Apptainer Simulation Specs Diagnostics
 
 [![Terminal-Bench](https://img.shields.io/badge/Terminal--Bench-Edition%202-blue.svg)](https://experts.snorkel-ai.com/)
-[![Status](https://img.shields.io/badge/Status-Accepted-brightgreen.svg)]()
+
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 
 An offline diagnostic analysis engine and Snorkel Terminal-Bench benchmark task (`apptainer_diag`) that evaluates numerical stability risks for finite-volume groundwater simulation workflows packaged inside Apptainer containers.
