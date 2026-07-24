@@ -49,9 +49,9 @@ REQUIRED_JSON_SCHEMA_KEYS = sorted(
 )
 
 
-def test_apptainer_spec_parsing():
-    """Verify parsing of Apptainer spec resource limits, env vars, and base image."""
-    content = """Bootstrap: docker
+def test_apptainer_spec_parsing_def_and_json():
+    """Verify parsing of Apptainer spec in both .def text format and JSON format."""
+    content_def = """Bootstrap: docker
 From: ubuntu:22.04
 
 %environment
@@ -63,11 +63,11 @@ From: ubuntu:22.04
     Maintainer HydroLab
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".def") as f:
-        f.write(content)
-        temp_path = f.name
+        f.write(content_def)
+        temp_path_def = f.name
 
     try:
-        spec = parse_apptainer_spec(temp_path)
+        spec = parse_apptainer_spec(temp_path_def)
         assert spec.base_image == "ubuntu:22.04"
         assert spec.memory_limit_mb == 4096.0
         assert spec.cpu_cores == 4.0
@@ -75,7 +75,31 @@ From: ubuntu:22.04
         assert spec.env_vars.get("MEMORY_LIMIT_MB") == "4096"
         assert spec.labels.get("Maintainer") == "HydroLab"
     finally:
-        os.remove(temp_path)
+        os.remove(temp_path_def)
+
+    content_json = json.dumps(
+        {
+            "base_image": "ubuntu:22.04",
+            "memory_limit_mb": 4096.0,
+            "cpu_cores": 4.0,
+            "walltime_seconds": 3600.0,
+            "environment_vars": {"MEMORY_LIMIT_MB": "4096"},
+            "labels": {"Maintainer": "HydroLab"},
+        }
+    )
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
+        f.write(content_json)
+        temp_path_json = f.name
+
+    try:
+        spec_json = parse_apptainer_spec(temp_path_json)
+        assert spec_json.base_image == "ubuntu:22.04"
+        assert spec_json.memory_limit_mb == 4096.0
+        assert spec_json.cpu_cores == 4.0
+        assert spec_json.walltime_seconds == 3600.0
+        assert spec_json.env_vars.get("MEMORY_LIMIT_MB") == "4096"
+    finally:
+        os.remove(temp_path_json)
 
 
 def test_solver_residuals_keyvalue_csv_and_nan_parsing():
@@ -144,7 +168,7 @@ def test_unit_conversions():
 
 
 def test_all_five_solver_damping_regimes():
-    """Verify classification of all five solver damping regimes."""
+    """Verify classification of all five solver damping regimes including norm_ratio > 2.0 trigger."""
     # 1. Optimal Damping
     trace_opt = SolverTrace(
         filepath="",
@@ -226,7 +250,7 @@ def test_all_five_solver_damping_regimes():
     assert regime == "Incomplete / Slow Convergence"
     assert risk == 50.0
 
-    # 5. Divergent Damping Instability
+    # 5. Divergent Damping Instability via NaN
     trace_div = SolverTrace(
         filepath="",
         records=[
@@ -245,6 +269,27 @@ def test_all_five_solver_damping_regimes():
     regime, risk, _ = classify_damping_regime(trace_div)
     assert regime == "Divergent Damping Instability"
     assert risk == 100.0
+
+    # 6. Divergent Damping Instability via norm_ratio > 2.0 trigger directly
+    trace_high_ratio = SolverTrace(
+        filepath="",
+        records=[
+            ResidualRecord(
+                iteration=1,
+                time_step=1,
+                dt_seconds=1.0,
+                residual_head_m=1.0,
+                residual_flux_m3_s=0.0,
+                norm_ratio=2.5,
+                is_nan=False,
+            )
+        ],
+        diverged=False,
+        converged=False,
+    )
+    regime_hr, risk_hr, _ = classify_damping_regime(trace_high_ratio)
+    assert regime_hr == "Divergent Damping Instability"
+    assert risk_hr == 100.0
 
 
 def test_valgrind_memcheck_parser():
@@ -468,10 +513,8 @@ def test_cli_end_to_end_pipeline_execution():
                 "Program received signal SIGFPE, Arithmetic exception.\n#0 0x401000 in solve ()\n"
             )
 
-        # Enforce that setuptools apptainer-diag console_scripts executable entrypoint IS installed
         cli_executable = shutil.which("apptainer-diag")
         if not cli_executable:
-            # Fallback to python module execution if not installed in current env
             cmd = [
                 sys.executable,
                 "-m",
@@ -507,7 +550,6 @@ def test_cli_end_to_end_pipeline_execution():
         assert res.returncode == 0
         assert os.path.exists(out_p)
 
-        # Parse generated JSON and validate schema & precedence tier 1 override
         report_data = json.loads(Path(out_p).read_text(encoding="utf-8"))
         assert list(report_data.keys()) == REQUIRED_JSON_SCHEMA_KEYS
         assert report_data["precedence_analysis"]["precedence_tier"] == 1
@@ -571,3 +613,29 @@ def test_cli_default_output_file_creation():
         assert res.returncode == 0
         default_report = os.path.join(tmpdir, "report.json")
         assert os.path.exists(default_report)
+
+
+def test_cli_stdout_output_mode():
+    """Verify stdout mode when running CLI module."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_p = os.path.join(tmpdir, "Apptainer.def")
+        res_p = os.path.join(tmpdir, "solver.log")
+
+        with open(spec_p, "w") as f:
+            f.write("Bootstrap: docker\nFrom: ubuntu:22.04\n")
+        with open(res_p, "w") as f:
+            f.write("CONVERGED\n")
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "apptainer_diag.cli",
+            "--spec",
+            spec_p,
+            "--residuals",
+            res_p,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        assert res.returncode == 0
+        assert "risk_scores" in res.stdout
+        assert "apptainer_spec_summary" in res.stdout

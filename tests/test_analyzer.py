@@ -128,7 +128,7 @@ def test_all_five_damping_regimes():
     assert regime == "Incomplete / Slow Convergence"
     assert risk == 50.0
 
-    # 5. Divergent Damping Instability
+    # 5. Divergent Damping Instability via NaN
     trace_div = SolverTrace(
         filepath="",
         records=[
@@ -147,6 +147,27 @@ def test_all_five_damping_regimes():
     regime, risk, _ = classify_damping_regime(trace_div)
     assert regime == "Divergent Damping Instability"
     assert risk == 100.0
+
+    # 6. Divergent Damping Instability via norm_ratio > 2.0 trigger alone
+    trace_high_ratio = SolverTrace(
+        filepath="",
+        records=[
+            ResidualRecord(
+                iteration=1,
+                time_step=1,
+                dt_seconds=1.0,
+                residual_head_m=1.0,
+                residual_flux_m3_s=0.0,
+                norm_ratio=2.5,
+                is_nan=False,
+            )
+        ],
+        diverged=False,
+        converged=False,
+    )
+    regime_hr, risk_hr, _ = classify_damping_regime(trace_high_ratio)
+    assert regime_hr == "Divergent Damping Instability"
+    assert risk_hr == 100.0
 
 
 def test_precedence_hierarchy_all_tiers():

@@ -1,5 +1,5 @@
 """
-Parser for Apptainer container definition files (.def / .spec).
+Parser for Apptainer container definition files (.def / .spec / JSON).
 """
 
 import json
@@ -24,10 +24,10 @@ def parse_apptainer_spec(filepath: str) -> ContainerSpec:
         try:
             data = json.loads(content)
             spec.base_image = data.get("base_image", spec.base_image)
-            spec.memory_limit_mb = data.get("memory_limit_mb")
-            spec.cpu_cores = data.get("cpu_cores")
-            spec.walltime_seconds = data.get("walltime_seconds")
-            spec.env_vars = data.get("env_vars", {})
+            spec.memory_limit_mb = data.get("memory_limit_mb", spec.memory_limit_mb)
+            spec.cpu_cores = data.get("cpu_cores", spec.cpu_cores)
+            spec.walltime_seconds = data.get("walltime_seconds", spec.walltime_seconds)
+            spec.env_vars = data.get("env_vars", data.get("environment_vars", {}))
             spec.labels = data.get("labels", {})
             return spec
         except json.JSONDecodeError:

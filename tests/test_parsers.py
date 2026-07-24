@@ -2,6 +2,7 @@
 Unit tests for parsers in apptainer_diag.
 """
 
+import json
 import os
 import tempfile
 
@@ -31,6 +32,33 @@ From: debian:bookworm
         assert spec.base_image == "debian:bookworm"
         assert spec.memory_limit_mb == 2048.0
         assert spec.walltime_seconds == 1800.0
+    finally:
+        os.remove(path)
+
+
+def test_parse_apptainer_spec_json_format():
+    content = json.dumps(
+        {
+            "base_image": "ubuntu:22.04",
+            "memory_limit_mb": 4096.0,
+            "cpu_cores": 4.0,
+            "walltime_seconds": 3600.0,
+            "environment_vars": {"MEMORY_LIMIT_MB": "4096"},
+            "labels": {"Maintainer": "HydroLab"},
+        }
+    )
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
+        f.write(content)
+        path = f.name
+
+    try:
+        spec = parse_apptainer_spec(path)
+        assert spec.base_image == "ubuntu:22.04"
+        assert spec.memory_limit_mb == 4096.0
+        assert spec.cpu_cores == 4.0
+        assert spec.walltime_seconds == 3600.0
+        assert spec.env_vars.get("MEMORY_LIMIT_MB") == "4096"
+        assert spec.labels.get("Maintainer") == "HydroLab"
     finally:
         os.remove(path)
 
