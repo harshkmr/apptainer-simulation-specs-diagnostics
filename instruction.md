@@ -29,7 +29,7 @@ Disentangle contradictory diagnostic signals by applying a strict 5-tier root-ca
 - **Tier 1 - Valgrind Memory Corruption**: If has_critical_memory_corruption is true, override downstream GDB SIGFPE crashes or solver divergence. Set precedence_tier = 1, valgrind_override_applied = True, contradictions_resolved list, and root_cause = "Valgrind Memory Corruption (Invalid Write / Free)".
 - **Tier 2 - Container Resource Limit Exhaustion**: If execution exceeded memory_limit_mb or walltime_seconds, set precedence_tier = 2 and root_cause = "Apptainer Container Resource Limit Exhaustion (OOM)".
 - **Tier 3 - GDB SIGFPE Exception**: If GDB caught SIGFPE and Valgrind memory check is clean, set precedence_tier = 3 and root_cause = "GDB SIGFPE Arithmetic Exception".
-- **Tier 4 - Segmentation Fault**: If GDB caught SIGSEGV without Valgrind invalid writes, set precedence_tier = 4 and root_cause = "Segmentation Fault (Null Pointer or Invalid Memory Reference)".
+- **Tier 4 - Signal / Segmentation Fault**: If GDB caught SIGSEGV without Valgrind invalid writes, set precedence_tier = 4 and root_cause = "Segmentation Fault (Null Pointer or Invalid Memory Reference)". If GDB caught SIGABRT without memory corruption, set precedence_tier = 4 and root_cause = "GDB SIGABRT Abort Signal Exception".
 - **Tier 5 - Algorithmic Damping Instability**: If no fatal memory or signal crashes occurred, set precedence_tier = 5 and root_cause = "Algorithmic Damping Instability: <Regime Name>".
 
 #### 5. Risk Scoring and Qualitative Levels
@@ -49,4 +49,4 @@ Serialize the analysis into a key-sorted JSON report (sort_keys=True) with the f
 
 #### 7. Packaging and CLI Interface
 Package the project using setuptools in solution/setup.py exposing a CLI entrypoint apptainer-diag.
-The CLI must accept arguments --spec, --residuals, --valgrind, --gdb, and --output <json_path> (or print to stdout if omitted).
+The CLI must accept arguments --spec, --residuals, --valgrind, --gdb, and --output <json_path> (defaulting to report.json if output path is not provided, or printing to stdout).

@@ -102,6 +102,7 @@ def test_unit_conversions():
     # Conductivity K -> m/s
     assert abs(convert_conductivity_to_m_per_sec(86400.0, "m/day") - 1.0) < 1e-5
     assert abs(convert_conductivity_to_m_per_sec(283464.57, "ft/day") - 1.0) < 1e-4
+    assert abs(convert_conductivity_to_m_per_sec(100.0, "cm/s") - 1.0) < 1e-5
 
     # Time -> seconds
     assert convert_time_to_seconds(1.0, "hours") == 3600.0
@@ -217,7 +218,9 @@ def test_valgrind_memcheck_parser():
     content = """
 ==12345== LEAK SUMMARY:
 ==12345==    definitely lost: 4,096 bytes in 1 blocks
+==12345==    indirectly lost: 2,048 bytes in 1 blocks
 ==12345==    possibly lost: 1,024 bytes in 1 blocks
+==12345==    still reachable: 8,192 bytes in 4 blocks
 ==12345== Invalid write of size 8 at 0x401234
 ==12345== ERROR SUMMARY: 2 errors from 2 contexts
 """
@@ -228,6 +231,9 @@ def test_valgrind_memcheck_parser():
     try:
         valgrind = parse_valgrind_summary(temp_path)
         assert valgrind.definitely_lost_bytes == 4096
+        assert valgrind.indirectly_lost_bytes == 2048
+        assert valgrind.possibly_lost_bytes == 1024
+        assert valgrind.still_reachable_bytes == 8192
         assert valgrind.invalid_writes == 1
         assert valgrind.has_critical_memory_corruption is True
     finally:
@@ -235,9 +241,10 @@ def test_valgrind_memcheck_parser():
 
 
 def test_gdb_backtrace_parser_sigabrt():
-    """Verify parsing of GDB backtrace crash signals including SIGABRT."""
+    """Verify parsing of GDB backtrace crash signals including SIGABRT and fault address."""
     content = """
 Program received signal SIGABRT, Aborted.
+(fault address 0x00007ffff7a12345)
 #0  0x00007ffff7a12345 in abort () at abort.c:50
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
@@ -248,6 +255,7 @@ Program received signal SIGABRT, Aborted.
         gdb = parse_gdb_backtrace(temp_path)
         assert gdb.signal == "SIGABRT"
         assert gdb.is_sigabrt is True
+        assert gdb.fault_address == "0x00007ffff7a12345"
         assert len(gdb.frames) == 1
     finally:
         os.remove(temp_path)

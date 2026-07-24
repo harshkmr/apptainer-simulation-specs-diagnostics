@@ -79,6 +79,11 @@ CONVERGED
 
 def test_parse_valgrind_summary():
     content = """
+==999== LEAK SUMMARY:
+==999==    definitely lost: 4,096 bytes in 1 blocks
+==999==    indirectly lost: 2,048 bytes in 1 blocks
+==999==    possibly lost: 1,024 bytes in 1 blocks
+==999==    still reachable: 8,192 bytes in 4 blocks
 ==999== Invalid free() / delete / delete[] / realloc()
 ==999==    at 0x401234: free
 ==999== ERROR SUMMARY: 1 errors from 1 contexts
@@ -89,6 +94,10 @@ def test_parse_valgrind_summary():
 
     try:
         val = parse_valgrind_summary(path)
+        assert val.definitely_lost_bytes == 4096
+        assert val.indirectly_lost_bytes == 2048
+        assert val.possibly_lost_bytes == 1024
+        assert val.still_reachable_bytes == 8192
         assert val.invalid_frees == 1
         assert val.has_critical_memory_corruption is True
     finally:
@@ -97,7 +106,8 @@ def test_parse_valgrind_summary():
 
 def test_parse_gdb_backtrace():
     content = """
-Program received signal SIGFPE, Arithmetic exception.
+Program received signal SIGSEGV, Segmentation fault.
+(fault address 0x00007ffff7a12345)
 #0  0x00007ffff7a12345 in solve_matrix (a=0x0) at solver.c:10
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
@@ -106,8 +116,9 @@ Program received signal SIGFPE, Arithmetic exception.
 
     try:
         gdb = parse_gdb_backtrace(path)
-        assert gdb.signal == "SIGFPE"
-        assert gdb.is_sigfpe is True
+        assert gdb.signal == "SIGSEGV"
+        assert gdb.is_sigsegv is True
+        assert gdb.fault_address == "0x00007ffff7a12345"
         assert len(gdb.frames) == 1
     finally:
         os.remove(path)
