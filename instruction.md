@@ -1,4 +1,4 @@
-Develop a scientific computing numerical diagnostics tool (`apptainer_diag`) for analyzing finite-volume groundwater simulation execution logs, Apptainer container specifications, Valgrind memory traces, and GDB crash dumps. Package the project using `setuptools` with CLI entrypoint `apptainer-diag`.
+Process and analyze diagnostic log data from groundwater simulation execution runs, Apptainer container specifications, Valgrind memory profiles, and GDB crash dumps. Build an offline data processing pipeline (`apptainer_diag`) packaged via `setuptools` with CLI entrypoint `apptainer-diag`.
 
 ### Key Requirements
 
