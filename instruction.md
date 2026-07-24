@@ -1,53 +1,24 @@
-Configure, build, and package an offline Python build distribution for `apptainer_diag` using `setuptools` and `setup.py`. Configure package dependencies, entrypoint distribution, and build manifests for an offline diagnostic utility that validates Apptainer container specs, dependency environment configurations, and simulation execution logs.
+Analyze simulation execution logs, container specifications, and diagnostic dumps for finite-volume groundwater modeling runs. Build an offline Python data analysis tool (`apptainer_diag`) packaged via `setuptools` with CLI entrypoint `apptainer-diag`.
 
-### Build, Packaging, and Functional Requirements
+### Key Requirements
 
-#### 1. Setuptools Packaging and CLI Interface Configuration
-- Package the project using `setuptools` in `solution/setup.py` exposing a console script CLI entrypoint `apptainer-diag` mapping to `apptainer_diag.cli:main`.
-- Configure package metadata, module discovery, and build requirements so the package installs cleanly via `pip install -e solution/` without external third-party runtime dependencies beyond the Python standard library and `setuptools`.
-- The CLI must accept arguments `--spec`, `--residuals`, `--valgrind`, `--gdb`, and `--output <json_path>` (defaulting to `report.json` if `--output` is omitted, or printing to stdout if explicitly configured).
+1. **Packaging & CLI Interface**:
+   - Package the project using `setuptools` in `solution/setup.py` exposing console script entrypoint `apptainer-diag` mapping to `apptainer_diag.cli:main`.
+   - The CLI must accept `--spec`, `--residuals`, `--valgrind`, `--gdb`, and `--output <json_path>` (defaulting to `report.json` if omitted, or printing to stdout if explicitly configured).
 
-#### 2. Diagnostic File Log Parsers
-The package modules must parse four distinct diagnostic file inputs:
-- **Apptainer Container Specs (.def / .spec or JSON)**: Extract base_image, memory_limit_mb, cpu_cores, walltime_seconds, %environment variables, and %labels.
-- **Solver Residual Logs**: Parse lines formatted as Iter <N>: dt=<X>s res_head=<Y>m res_flux=<Z>m3/s norm_ratio=<R> or CSV lines N, dt, res_head, res_flux, norm_ratio. Detect NaN / Inf values and keywords CONVERGED / DIVERGED.
-- **Valgrind Memcheck Summaries**: Parse definitely lost, indirectly lost, possibly lost, and still reachable bytes, ERROR SUMMARY counts, and error patterns (Invalid write, Invalid read, Invalid free, uninitialised value). Flag has_critical_memory_corruption = True if invalid writes or invalid frees > 0.
-- **GDB Backtrace Dumps**: Detect crash signals (SIGSEGV, SIGFPE, SIGABRT), fault address (fault address 0x...), and frame call stacks #N [0x...] in <function> at <file>:<line>.
+2. **Diagnostic Log Data Parsers**:
+   - Parse container spec resource limits, environment variables, and labels from `.def`, `.spec`, or `.json` files.
+   - Parse solver residual iterations from key-value or CSV logs, detecting NaN/Inf values and convergence/divergence statuses.
+   - Parse Valgrind heap memory leak byte counts, invalid reads/writes, invalid frees, and error summaries. Flag critical memory corruption if invalid writes or invalid frees occur.
+   - Parse GDB crash signals (SIGSEGV, SIGFPE, SIGABRT), fault addresses, and stack frames.
 
-#### 3. Physical Unit Normalization Conversions
-Normalize all input physical quantities to SI base units:
-- **Pressure Head (h)**: ft to m (x 0.3048), Pa to m (/ 9806.65), bar to m (x 10.1972), psi to m (x 0.70307).
-- **Volumetric Flux (Q)**: gpm to m3/s (/ 15850.32), cfs to m3/s (x 0.0283168), m3/d or m3/day to m3/s (/ 86400), L/min to m3/s (/ 60000).
-- **Hydraulic Conductivity (K)**: m/day to m/s (/ 86400), ft/day to m/s (/ 283464.57), cm/s to m/s (/ 100).
-- **Time Step (dt)**: min to s (x 60), hours to s (x 3600), days to s (x 86400).
+3. **Physical Unit Normalization**:
+   - Convert pressure head ($ft$, $Pa$, $bar$, $psi$), volumetric flux ($gpm$, $cfs$, $m^3/d$, $m^3/day$, $L/min$), hydraulic conductivity ($m/day$, $ft/day$, $cm/s$), and time steps ($min$, $hours$, $days$) into SI base units ($m$, $m^3/s$, $m/s$, $s$).
 
-#### 4. Solver Damping Regime Classifier
-Classify solver residual convergence behavior across iteration histories into one of five regimes:
-- **Divergent Damping Instability** (Risk = 100.0): Any NaN / Inf residual, explicit DIVERGED status, or norm ratio > 2.0.
-- **Optimal Damping** (Risk = 10.0): Final residual norm ratio < 1e-6 and no oscillations.
-- **Under-Damped Oscillation** (Risk = 75.0): Residual norm ratios oscillate (> 1.15 and < 0.85 on alternating steps >= 2 times).
-- **Over-Damped Stagnation** (Risk = 60.0): Residual norm ratio remains > 0.98 for >= 5 consecutive steps without reaching target tolerance.
-- **Incomplete / Slow Convergence** (Risk = 50.0): Non-divergent solver that terminates before reaching 1e-6 tolerance.
+4. **Damping Regime Classification & Precedence Resolution**:
+   - Classify solver convergence behavior across iteration histories into five regimes: *Divergent Damping Instability*, *Optimal Damping*, *Under-Damped Oscillation*, *Over-Damped Stagnation*, and *Incomplete / Slow Convergence*.
+   - Apply a 5-tier root-cause precedence hierarchy to resolve evidence conflicts: Tier 1 (Valgrind memory corruption override), Tier 2 (Container OOM limit), Tier 3 (GDB SIGFPE), Tier 4 (GDB SIGSEGV / SIGABRT), and Tier 5 (Algorithmic damping instability).
 
-#### 5. Precedence Hierarchy Root-Cause Resolver
-Disentangle contradictory diagnostic signals by applying a strict 5-tier root-cause precedence hierarchy:
-- **Tier 1 - Valgrind Memory Corruption**: If has_critical_memory_corruption is true, override downstream GDB SIGFPE crashes or solver divergence. Set precedence_tier = 1, valgrind_override_applied = True, contradictions_resolved list, and root_cause = "Valgrind Memory Corruption (Invalid Write / Free)".
-- **Tier 2 - Container Resource Limit Exhaustion**: If execution exceeded memory_limit_mb or walltime_seconds, set precedence_tier = 2 and root_cause = "Apptainer Container Resource Limit Exhaustion (OOM)".
-- **Tier 3 - GDB SIGFPE Exception**: If GDB caught SIGFPE and Valgrind memory check is clean, set precedence_tier = 3 and root_cause = "GDB SIGFPE Arithmetic Exception".
-- **Tier 4 - Signal / Segmentation Fault**: If GDB caught SIGSEGV without Valgrind invalid writes, set precedence_tier = 4 and root_cause = "Segmentation Fault (Null Pointer or Invalid Memory Reference)". If GDB caught SIGABRT without memory corruption, set precedence_tier = 4 and root_cause = "GDB SIGABRT Abort Signal Exception".
-- **Tier 5 - Algorithmic Damping Instability**: If no fatal memory or signal crashes occurred, set precedence_tier = 5 and root_cause = "Algorithmic Damping Instability: <Regime Name>".
-
-#### 6. Risk Scoring and Qualitative Levels
-Compute component risk scores (0.0 to 100.0) weighted as:
-Overall Score = 0.45 x Memory Safety Risk + 0.40 x Solver Stability Risk + 0.15 x Resource Limits Risk.
-Qualitative risk levels: LOW (0-25), MEDIUM (26-50), HIGH (51-75), CRITICAL (76-100).
-
-#### 7. Deterministic JSON Report Schema
-Serialize analysis output into a key-sorted JSON report (`sort_keys=True`) containing the exact required top-level keys:
-- apptainer_spec_summary: { "base_image", "cpu_cores", "environment_vars", "filepath", "labels", "memory_limit_mb", "walltime_seconds" }
-- solver_stability_summary: { "converged", "damping_factor", "damping_regime", "diverged", "filepath", "final_residual_norm", "initial_residual_norm", "regime_explanation", "total_iterations" }
-- valgrind_summary: { "definitely_lost_bytes", "filepath", "has_critical_memory_corruption", "indirectly_lost_bytes", "invalid_frees", "invalid_reads", "invalid_writes", "possibly_lost_bytes", "still_reachable_bytes", "total_errors", "uninitialized_reads" }
-- gdb_summary: { "crash_thread", "fault_address", "filepath", "frames", "is_sigabrt", "is_sigfpe", "is_sigsegv", "signal" }
-- precedence_analysis: { "contradictions_resolved", "precedence_tier", "rationale", "root_cause", "valgrind_override_applied" }
-- risk_scores: { "memory_safety_risk", "numerical_convergence_risk", "overall_score", "resource_constraint_risk", "risk_level" }
-- qualitative_assessment: List of human-readable assessment strings.
+5. **Risk Scoring & Deterministic JSON Report**:
+   - Calculate component risk scores ($0.0$ to $100.0$) for Memory Safety, Solver Stability, and Resource Constraints, combining them into an overall weighted score and qualitative risk level (LOW, MEDIUM, HIGH, CRITICAL).
+   - Serialize the analysis into a key-sorted JSON report (`sort_keys=True`) with required top-level sections (`apptainer_spec_summary`, `solver_stability_summary`, `valgrind_summary`, `gdb_summary`, `precedence_analysis`, `risk_scores`, `qualitative_assessment`) and their associated sub-keys.
