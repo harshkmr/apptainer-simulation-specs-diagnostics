@@ -37,9 +37,9 @@ def resolve_evidence_precedence(
             contradictions_resolved.append(
                 "GDB reported SIGFPE (floating point exception), but Valgrind memory corruption takes precedence as the primary trigger."
             )
-        elif gdb.is_sigsegv:
+        elif gdb.is_sigsegv or gdb.is_sigabrt:
             contradictions_resolved.append(
-                "GDB reported SIGSEGV in solver stack, which is classified as a secondary manifestation of heap corruption."
+                "GDB reported crash signal in solver stack, which is classified as a secondary manifestation of heap corruption."
             )
         if trace.diverged:
             contradictions_resolved.append(
@@ -72,12 +72,16 @@ def resolve_evidence_precedence(
             "Valgrind memory check is clean. Manual Tier 3 rules classify this as pure numerical solver divergence."
         )
 
-    # Check Tier 4: Segmentation Fault without Valgrind Memory Violation (Unmapped Access)
-    elif gdb.is_sigsegv:
+    # Check Tier 4: Segmentation Fault or Abort Signal without Valgrind Memory Violation
+    elif gdb.is_sigsegv or gdb.is_sigabrt:
         precedence_tier = 4
-        root_cause = "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
+        root_cause = (
+            "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
+            if gdb.is_sigsegv
+            else "GDB SIGABRT Abort Signal Exception"
+        )
         fault_fn = gdb.frames[0].function if gdb.frames else "unknown routine"
-        rationale = f"GDB caught SIGSEGV at fault address {gdb.fault_address or '0x0'} in '{fault_fn}'."
+        rationale = f"GDB caught {gdb.signal or 'signal'} at fault address {gdb.fault_address or '0x0'} in '{fault_fn}'."
 
     # Check Tier 5: Algorithmic Solver Instability / Damping Failure
     else:

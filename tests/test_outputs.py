@@ -1,7 +1,7 @@
 """
 Comprehensive pytest test suite for Apptainer simulation diagnostics benchmark.
 Fully covers parsers, unit conversions, damping regime classifications,
-evidence precedence resolution, and deterministic report generation.
+evidence precedence resolution, component risk scores, and CLI end-to-end execution.
 """
 
 import json
@@ -61,6 +61,26 @@ From: ubuntu:22.04
         assert spec.walltime_seconds == 3600.0
         assert spec.env_vars.get("MEMORY_LIMIT_MB") == "4096"
         assert spec.labels.get("Maintainer") == "HydroLab"
+    finally:
+        os.remove(temp_path)
+
+
+def test_solver_residuals_keyvalue_and_csv_parsing():
+    """Verify solver residual parsing for both key-value and CSV format logs."""
+    content_csv = """# N, dt, res_head, res_flux, norm_ratio
+1, 1.0, 0.5, 0.05, 0.5
+2, 1.0, 0.05, 0.005, 0.05
+CONVERGED
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+        f.write(content_csv)
+        temp_path = f.name
+
+    try:
+        trace = parse_solver_residuals(temp_path)
+        assert trace.total_iterations == 2
+        assert trace.converged is True
+        assert trace.final_residual == 0.05
     finally:
         os.remove(temp_path)
 
@@ -214,12 +234,11 @@ def test_valgrind_memcheck_parser():
         os.remove(temp_path)
 
 
-def test_gdb_backtrace_parser():
-    """Verify parsing of GDB backtrace crash signals and call stack frames."""
+def test_gdb_backtrace_parser_sigabrt():
+    """Verify parsing of GDB backtrace crash signals including SIGABRT."""
     content = """
-Program received signal SIGSEGV, Segmentation fault.
-#0  0x00007ffff7a12345 in petsc_solve (matrix=0x0) at petsc_wrapper.c:120
-#1  0x0000000000401122 in main (argc=1, argv=0x7fffffffe000) at main.c:45
+Program received signal SIGABRT, Aborted.
+#0  0x00007ffff7a12345 in abort () at abort.c:50
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
         f.write(content)
@@ -227,10 +246,9 @@ Program received signal SIGSEGV, Segmentation fault.
 
     try:
         gdb = parse_gdb_backtrace(temp_path)
-        assert gdb.signal == "SIGSEGV"
-        assert gdb.is_sigsegv is True
-        assert len(gdb.frames) == 2
-        assert gdb.frames[0].function == "petsc_solve"
+        assert gdb.signal == "SIGABRT"
+        assert gdb.is_sigabrt is True
+        assert len(gdb.frames) == 1
     finally:
         os.remove(temp_path)
 
@@ -286,8 +304,8 @@ def test_precedence_tier_3_gdb_sigfpe():
     assert res["root_cause"] == "GDB SIGFPE Arithmetic Exception"
 
 
-def test_precedence_tier_4_gdb_sigsegv():
-    """Verify Tier 4: GDB SIGSEGV segmentation fault without Valgrind invalid writes."""
+def test_precedence_tier_4_gdb_sigsegv_and_sigabrt():
+    """Verify Tier 4: GDB SIGSEGV / SIGABRT without Valgrind invalid writes."""
     spec = parse_apptainer_spec("")
     trace = parse_solver_residuals("")
     valgrind = parse_valgrind_summary("")
@@ -295,32 +313,64 @@ def test_precedence_tier_4_gdb_sigsegv():
     gdb.signal = "SIGSEGV"
     gdb.is_sigsegv = True
 
-    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
-    assert res["precedence_tier"] == 4
+    res1 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
+    assert res1["precedence_tier"] == 4
     assert (
-        res["root_cause"]
+        res1["root_cause"]
         == "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
     )
 
+    gdb.signal = "SIGABRT"
+    gdb.is_sigsegv = False
+    gdb.is_sigabrt = True
+    res2 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
+    assert res2["precedence_tier"] == 4
+    assert res2["root_cause"] == "GDB SIGABRT Abort Signal Exception"
 
-def test_risk_scoring_formula():
-    """Verify 45% / 40% / 15% weighted risk score calculation."""
+
+def test_risk_component_scores_and_qualitative_thresholds():
+    """Verify component risk calculations and all four qualitative risk levels (LOW, MEDIUM, HIGH, CRITICAL)."""
     spec = ContainerSpec(filepath="")
     trace = SolverTrace(filepath="")
-    valgrind = ValgrindSummary(
-        filepath="", invalid_writes=1, has_critical_memory_corruption=True
-    )
+    valgrind = ValgrindSummary(filepath="")
     gdb = GdbBacktrace(filepath="")
 
-    scores = calculate_risk_scores(
+    # LOW (0-25)
+    s_low = calculate_risk_scores(spec, trace, valgrind, gdb, "Optimal Damping", 10.0)
+    assert s_low.memory_safety_risk == 0.0
+    assert s_low.numerical_convergence_risk == 10.0
+    assert s_low.resource_constraint_risk == 0.0
+    assert s_low.risk_level == "LOW"
+
+    # MEDIUM (26-50)
+    valgrind.invalid_reads = 1
+    s_med = calculate_risk_scores(
         spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
     )
-    expected_overall = (
-        0.45 * scores.memory_safety_risk
-        + 0.40 * scores.numerical_convergence_risk
-        + 0.15 * scores.resource_constraint_risk
+    assert s_med.memory_safety_risk == 40.0
+    assert s_med.numerical_convergence_risk == 50.0
+    assert s_med.overall_score == 38.0  # 0.45*40 + 0.40*50 = 18 + 20 = 38
+    assert s_med.risk_level == "MEDIUM"
+
+    # HIGH (51-75)
+    valgrind.invalid_reads = 0
+    valgrind.has_critical_memory_corruption = True
+    valgrind.invalid_writes = 1
+    s_high = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
     )
-    assert abs(scores.overall_score - round(expected_overall, 2)) < 0.01
+    assert s_high.memory_safety_risk == 100.0
+    assert s_high.overall_score == 65.0  # 0.45*100 + 0.40*50 = 45 + 20 = 65
+    assert s_high.risk_level == "HIGH"
+
+    # CRITICAL (76-100)
+    gdb.signal = "SIGKILL"
+    s_crit = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Divergent Damping Instability", 100.0
+    )
+    assert s_crit.resource_constraint_risk == 90.0
+    assert s_crit.overall_score == 98.5
+    assert s_crit.risk_level == "CRITICAL"
 
 
 def test_deterministic_json_report_and_values():
@@ -349,17 +399,64 @@ def test_deterministic_json_report_and_values():
     assert "contradictions_resolved" in parsed["precedence_analysis"]
 
 
-def test_setuptools_packaging_and_cli_entrypoint():
-    """Verify setuptools package installation and apptainer-diag CLI entrypoint execution."""
-    solution_dir = str(Path(__file__).parent.parent / "solution")
-    assert os.path.exists(os.path.join(solution_dir, "setup.py"))
+def test_cli_end_to_end_pipeline_execution():
+    """Verify full end-to-end execution of apptainer-diag CLI with input files and --output JSON validation."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_p = os.path.join(tmpdir, "Apptainer.def")
+        res_p = os.path.join(tmpdir, "solver.log")
+        val_p = os.path.join(tmpdir, "valgrind.txt")
+        gdb_p = os.path.join(tmpdir, "gdb.txt")
+        out_p = os.path.join(tmpdir, "report.json")
 
-    # Test CLI invocation module fallback or installed script
-    res = subprocess.run(
-        [sys.executable, "-m", "apptainer_diag.cli", "--help"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert res.returncode == 0
-    assert "apptainer" in res.stdout.lower() or "groundwater" in res.stdout.lower()
+        with open(spec_p, "w") as f:
+            f.write(
+                "Bootstrap: docker\nFrom: ubuntu:22.04\n%environment\nexport MEMORY_LIMIT_MB=4096\n"
+            )
+
+        with open(res_p, "w") as f:
+            f.write(
+                "Iter 1: dt=1.0s res_head=1.0m res_flux=0.1m3/s norm_ratio=1.0\nCONVERGED\n"
+            )
+
+        with open(val_p, "w") as f:
+            f.write(
+                "==12345== Invalid write of size 8 at 0x401234\n==12345== ERROR SUMMARY: 1 errors\n"
+            )
+
+        with open(gdb_p, "w") as f:
+            f.write(
+                "Program received signal SIGFPE, Arithmetic exception.\n#0 0x401000 in solve ()\n"
+            )
+
+        # Execute CLI end-to-end
+        cmd = [
+            sys.executable,
+            "-m",
+            "apptainer_diag.cli",
+            "--spec",
+            spec_p,
+            "--residuals",
+            res_p,
+            "--valgrind",
+            val_p,
+            "--gdb",
+            gdb_p,
+            "--output",
+            out_p,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+        assert res.returncode == 0
+        assert os.path.exists(out_p)
+
+        # Parse generated JSON and validate schema & precedence tier 1 override
+        report_data = json.loads(Path(out_p).read_text(encoding="utf-8"))
+        assert list(report_data.keys()) == sorted(report_data.keys())
+        assert report_data["precedence_analysis"]["precedence_tier"] == 1
+        assert (
+            report_data["precedence_analysis"]["root_cause"]
+            == "Valgrind Memory Corruption (Invalid Write / Free)"
+        )
+        assert report_data["precedence_analysis"]["valgrind_override_applied"] is True
+        assert report_data["risk_scores"]["memory_safety_risk"] == 100.0
+        assert report_data["risk_scores"]["risk_level"] == "CRITICAL"

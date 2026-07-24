@@ -176,20 +176,17 @@ def test_precedence_hierarchy_all_tiers():
     assert res3["precedence_tier"] == 3
     assert res3["root_cause"] == "GDB SIGFPE Arithmetic Exception"
 
-    # Tier 4: GDB SIGSEGV
-    gdb.signal = "SIGSEGV"
+    # Tier 4: GDB SIGSEGV / SIGABRT
+    gdb.signal = "SIGABRT"
     gdb.is_sigfpe = False
-    gdb.is_sigsegv = True
+    gdb.is_sigabrt = True
     res4 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
     assert res4["precedence_tier"] == 4
-    assert (
-        res4["root_cause"]
-        == "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
-    )
+    assert res4["root_cause"] == "GDB SIGABRT Abort Signal Exception"
 
     # Tier 5: Algorithmic Damping Instability
     gdb.signal = None
-    gdb.is_sigsegv = False
+    gdb.is_sigabrt = False
     res5 = resolve_evidence_precedence(
         spec, trace, valgrind, gdb, "Under-Damped Oscillation"
     )
@@ -200,29 +197,62 @@ def test_precedence_hierarchy_all_tiers():
     )
 
 
-def test_risk_score_weighted_formula():
+def test_risk_score_component_validation_and_thresholds():
     spec = ContainerSpec(filepath="")
     trace = SolverTrace(filepath="")
     valgrind = ValgrindSummary(filepath="")
     gdb = GdbBacktrace(filepath="")
 
-    # Expected: overall_score = 0.45*80.0 + 0.40*50.0 + 0.15*20.0 = 36.0 + 20.0 + 3.0 = 59.0 -> HIGH
-    valgrind.has_critical_memory_corruption = True
-    valgrind.invalid_writes = 1
-    # memory_safety_risk = 80.0
+    # 1. LOW Risk Level (0-25)
+    scores_low = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Optimal Damping", 10.0
+    )
+    assert scores_low.memory_safety_risk == 0.0
+    assert scores_low.numerical_convergence_risk == 10.0
+    assert scores_low.resource_constraint_risk == 0.0
+    assert scores_low.overall_score == 4.0
+    assert scores_low.risk_level == "LOW"
 
-    scores = calculate_risk_scores(
+    # 2. MEDIUM Risk Level (26-50)
+    scores_med = calculate_risk_scores(
         spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
     )
-    # numerical_convergence_risk = 50.0
+    assert scores_med.memory_safety_risk == 0.0
+    assert scores_med.numerical_convergence_risk == 50.0
+    assert scores_med.resource_constraint_risk == 0.0
+    assert scores_med.overall_score == 20.0  # 0.4*50 = 20
+    assert scores_med.risk_level == "LOW"
 
-    # Ensure overall score matches formula calculation
-    expected_overall = (
-        0.45 * scores.memory_safety_risk
-        + 0.40 * scores.numerical_convergence_risk
-        + 0.15 * scores.resource_constraint_risk
+    valgrind.invalid_reads = 1
+    scores_med2 = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
     )
-    assert abs(scores.overall_score - round(expected_overall, 2)) < 0.01
+    # mem_risk = 40.0, num_risk = 50.0 -> 0.45*40 + 0.40*50 = 18 + 20 = 38.0
+    assert scores_med2.memory_safety_risk == 40.0
+    assert scores_med2.overall_score == 38.0
+    assert scores_med2.risk_level == "MEDIUM"
+
+    # 3. HIGH Risk Level (51-75)
+    valgrind.invalid_reads = 0
+    valgrind.has_critical_memory_corruption = True
+    valgrind.invalid_writes = 1
+    scores_high = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
+    )
+    # mem_risk = 100.0, num_risk = 50.0 -> 0.45*100 + 0.40*50 = 45 + 20 = 65.0
+    assert scores_high.memory_safety_risk == 100.0
+    assert scores_high.overall_score == 65.0
+    assert scores_high.risk_level == "HIGH"
+
+    # 4. CRITICAL Risk Level (76-100)
+    gdb.signal = "SIGKILL"
+    scores_critical = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Divergent Damping Instability", 100.0
+    )
+    # mem_risk = 100.0, num_risk = 100.0, res_risk = 90.0 -> 0.45*100 + 0.40*100 + 0.15*90 = 45 + 40 + 13.5 = 98.5
+    assert scores_critical.resource_constraint_risk == 90.0
+    assert scores_critical.overall_score == 98.5
+    assert scores_critical.risk_level == "CRITICAL"
 
 
 def test_deterministic_report_generation():

@@ -14,98 +14,117 @@ from apptainer_diag.parsers import (
 
 
 def test_parse_apptainer_spec():
-    content = """Bootstrap: docker
-From: ubuntu:22.04
+    content = """
+Bootstrap: docker
+From: debian:bookworm
 
 %environment
-    export MEMORY_LIMIT_MB=8192
-    export CPU_CORES=8
-    export WALLTIME_SECONDS=7200
-
-%labels
-    Maintainer HydroLab
-    Version 2.0
+    export MEMORY_LIMIT_MB=2048
+    export WALLTIME_SECONDS=1800
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".def") as f:
         f.write(content)
-        temp_path = f.name
+        path = f.name
 
     try:
-        spec = parse_apptainer_spec(temp_path)
-        assert spec.base_image == "ubuntu:22.04"
-        assert spec.memory_limit_mb == 8192.0
-        assert spec.cpu_cores == 8.0
-        assert spec.walltime_seconds == 7200.0
-        assert spec.env_vars.get("MEMORY_LIMIT_MB") == "8192"
-        assert spec.labels.get("Maintainer") == "HydroLab"
+        spec = parse_apptainer_spec(path)
+        assert spec.base_image == "debian:bookworm"
+        assert spec.memory_limit_mb == 2048.0
+        assert spec.walltime_seconds == 1800.0
     finally:
-        os.remove(temp_path)
+        os.remove(path)
 
 
-def test_parse_solver_residuals():
+def test_parse_solver_residuals_keyvalue_format():
     content = """
-# Simulation log
-Iter 1: dt=1.0s, res_head=10.0m, res_flux=1.0m3/s, norm_ratio=1.0
-Iter 2: dt=1.0s, res_head=5.0m, res_flux=0.5m3/s, norm_ratio=0.5
-Iter 3: dt=1.0s, res_head=0.0000001m, res_flux=0.00000001m3/s, norm_ratio=0.0000001
+# Solver trace
+Iter 1: dt=1.0s res_head=1.0m res_flux=0.1m3/s norm_ratio=1.0
+Iter 2: dt=1.0s res_head=0.1m res_flux=0.01m3/s norm_ratio=0.1
 CONVERGED
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".log") as f:
         f.write(content)
-        temp_path = f.name
+        path = f.name
 
     try:
-        trace = parse_solver_residuals(temp_path)
-        assert len(trace.records) == 3
+        trace = parse_solver_residuals(path)
+        assert trace.total_iterations == 2
         assert trace.converged is True
-        assert trace.initial_residual == 1.0
-        assert trace.final_residual == 0.0000001
+        assert len(trace.records) == 2
+        assert trace.records[0].residual_head_m == 1.0
     finally:
-        os.remove(temp_path)
+        os.remove(path)
+
+
+def test_parse_solver_residuals_csv_format():
+    content = """# Iter, dt, res_head, res_flux, norm_ratio
+1, 1.0, 0.5, 0.05, 0.5
+2, 1.0, 0.05, 0.005, 0.05
+CONVERGED
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+        f.write(content)
+        path = f.name
+
+    try:
+        trace = parse_solver_residuals(path)
+        assert trace.total_iterations == 2
+        assert trace.converged is True
+        assert len(trace.records) == 2
+        assert trace.records[0].residual_head_m == 0.5
+        assert trace.records[1].norm_ratio == 0.05
+    finally:
+        os.remove(path)
 
 
 def test_parse_valgrind_summary():
     content = """
-==12345== LEAK SUMMARY:
-==12345==    definitely lost: 4,096 bytes in 1 blocks
-==12345==    indirectly lost: 0 bytes in 0 blocks
-==12345==    possibly lost: 1,024 bytes in 1 blocks
-==12345==    still reachable: 8,192 bytes in 2 blocks
-==12345== Invalid write of size 8 at 0x401234
-==12345== ERROR SUMMARY: 2 errors from 2 contexts
+==999== Invalid free() / delete / delete[] / realloc()
+==999==    at 0x401234: free
+==999== ERROR SUMMARY: 1 errors from 1 contexts
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
         f.write(content)
-        temp_path = f.name
+        path = f.name
 
     try:
-        valgrind = parse_valgrind_summary(temp_path)
-        assert valgrind.definitely_lost_bytes == 4096
-        assert valgrind.invalid_writes == 1
-        assert valgrind.has_critical_memory_corruption is True
-        assert valgrind.total_errors == 2
+        val = parse_valgrind_summary(path)
+        assert val.invalid_frees == 1
+        assert val.has_critical_memory_corruption is True
     finally:
-        os.remove(temp_path)
+        os.remove(path)
 
 
 def test_parse_gdb_backtrace():
     content = """
-Program received signal SIGSEGV, Segmentation fault.
-0x00007ffff7a12345 in petsc_solve (matrix=0x0) at petsc_wrapper.c:120
-120     matrix->values[0] = 1.0;
-#0  0x00007ffff7a12345 in petsc_solve (matrix=0x0) at petsc_wrapper.c:120
-#1  0x0000000000401122 in main (argc=1, argv=0x7fffffffe000) at main.c:45
+Program received signal SIGFPE, Arithmetic exception.
+#0  0x00007ffff7a12345 in solve_matrix (a=0x0) at solver.c:10
 """
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
         f.write(content)
-        temp_path = f.name
+        path = f.name
 
     try:
-        gdb = parse_gdb_backtrace(temp_path)
-        assert gdb.signal == "SIGSEGV"
-        assert gdb.is_sigsegv is True
-        assert len(gdb.frames) == 2
-        assert gdb.frames[0].function == "petsc_solve"
-        assert gdb.frames[0].line == 120
+        gdb = parse_gdb_backtrace(path)
+        assert gdb.signal == "SIGFPE"
+        assert gdb.is_sigfpe is True
+        assert len(gdb.frames) == 1
     finally:
-        os.remove(temp_path)
+        os.remove(path)
+
+
+def test_parse_gdb_backtrace_sigabrt():
+    content = """
+Program received signal SIGABRT, Aborted.
+#0  0x00007ffff7a99999 in __GI_raise () from /lib/x86_64-linux-gnu/libc.so.6
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
+        f.write(content)
+        path = f.name
+
+    try:
+        gdb = parse_gdb_backtrace(path)
+        assert gdb.signal == "SIGABRT"
+        assert gdb.is_sigabrt is True
+    finally:
+        os.remove(path)

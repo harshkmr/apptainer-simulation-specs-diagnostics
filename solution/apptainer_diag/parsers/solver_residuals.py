@@ -32,9 +32,40 @@ def parse_solver_residuals(filepath: str) -> SolverTrace:
         if not line_str or line_str.startswith("#"):
             continue
 
-        # Look for iteration data
+        # Check CSV format: N, dt, res_head, res_flux, norm_ratio
+        parts = [p.strip() for p in line_str.split(",")]
+        if len(parts) >= 5 and parts[0].isdigit():
+            try:
+                iter_num = int(parts[0])
+                dt_sec = float(parts[1])
+                head_m = float(parts[2])
+                flux_m3_s = float(parts[3])
+                norm_ratio = float(parts[4])
+                is_nan = False
+                is_inf = False
+
+                if initial_res is None:
+                    initial_res = norm_ratio if norm_ratio > 0 else 1.0
+                last_res = norm_ratio
+
+                records.append(
+                    ResidualRecord(
+                        iteration=iter_num,
+                        time_step=1,
+                        dt_seconds=dt_sec,
+                        residual_head_m=head_m,
+                        residual_flux_m3_s=flux_m3_s,
+                        norm_ratio=norm_ratio,
+                        is_nan=is_nan,
+                        is_inf=is_inf,
+                    )
+                )
+                continue
+            except ValueError:
+                pass
+
+        # Look for key-value iteration data
         # e.g., Iter 1: dt=1.0s res_head=1.0m res_flux=0.1m3/s norm_ratio=1.0
-        # e.g., 1, 100.0, 1.5e-2, 3.2e-4, 0.85
         iter_match = re.search(
             r"(?:iter|iteration|step)\s*[:=]?\s*(\d+)", line_str, re.IGNORECASE
         )
