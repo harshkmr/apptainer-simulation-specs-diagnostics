@@ -21,12 +21,16 @@ RC=$?
 # Write reward file to writeable log directory
 if [ "$RC" -eq 0 ]; then
     echo 1 > "$VERIFIER_LOG_DIR/reward.txt" 2>/dev/null || true
+    if [ "$VERIFIER_LOG_DIR" != "/logs/verifier" ]; then
+        mkdir -p /logs/verifier 2>/dev/null || true
+        echo 1 > /logs/verifier/reward.txt 2>/dev/null || true
+    fi
 else
     echo 0 > "$VERIFIER_LOG_DIR/reward.txt" 2>/dev/null || true
+    if [ "$VERIFIER_LOG_DIR" != "/logs/verifier" ]; then
+        mkdir -p /logs/verifier 2>/dev/null || true
+        echo 0 > /logs/verifier/reward.txt 2>/dev/null || true
+    fi
 fi
 
-if [ $? -eq 0 ]; then
-    echo 1 > /logs/verifier/reward.txt
-else
-    echo 0 > /logs/verifier/reward.txt
-fi
+exit $RC

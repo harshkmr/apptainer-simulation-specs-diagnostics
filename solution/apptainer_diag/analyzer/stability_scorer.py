@@ -35,7 +35,7 @@ def classify_damping_regime(trace: SolverTrace) -> tuple[str, float, str]:
         return (
             "Divergent Damping Instability",
             100.0,
-            "Solver encounter NaN/Inf residual values or catastrophic mathematical divergence.",
+            "Solver encountered NaN/Inf residual values or catastrophic mathematical divergence.",
         )
 
     norm_ratios = [r.norm_ratio for r in records]

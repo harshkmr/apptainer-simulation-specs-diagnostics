@@ -48,6 +48,66 @@ REQUIRED_JSON_SCHEMA_KEYS = sorted(
     ]
 )
 
+REQUIRED_SUBKEYS = {
+    "apptainer_spec_summary": [
+        "base_image",
+        "cpu_cores",
+        "environment_vars",
+        "filepath",
+        "labels",
+        "memory_limit_mb",
+        "walltime_seconds",
+    ],
+    "solver_stability_summary": [
+        "converged",
+        "damping_factor",
+        "damping_regime",
+        "diverged",
+        "filepath",
+        "final_residual_norm",
+        "initial_residual_norm",
+        "regime_explanation",
+        "total_iterations",
+    ],
+    "valgrind_summary": [
+        "definitely_lost_bytes",
+        "filepath",
+        "has_critical_memory_corruption",
+        "indirectly_lost_bytes",
+        "invalid_frees",
+        "invalid_reads",
+        "invalid_writes",
+        "possibly_lost_bytes",
+        "still_reachable_bytes",
+        "total_errors",
+        "uninitialized_reads",
+    ],
+    "gdb_summary": [
+        "crash_thread",
+        "fault_address",
+        "filepath",
+        "frames",
+        "is_sigabrt",
+        "is_sigfpe",
+        "is_sigsegv",
+        "signal",
+    ],
+    "precedence_analysis": [
+        "contradictions_resolved",
+        "precedence_tier",
+        "rationale",
+        "root_cause",
+        "valgrind_override_applied",
+    ],
+    "risk_scores": [
+        "memory_safety_risk",
+        "numerical_convergence_risk",
+        "overall_score",
+        "resource_constraint_risk",
+        "risk_level",
+    ],
+}
+
 
 def test_apptainer_spec_parsing_def_and_json():
     """Verify parsing of Apptainer spec in both .def text format and JSON format."""
@@ -460,8 +520,8 @@ def test_risk_component_scores_and_qualitative_thresholds():
     assert s_crit.risk_level == "CRITICAL"
 
 
-def test_deterministic_json_report_schema_and_values():
-    """Verify that generated JSON diagnostic reports match all 7 required top-level keys and are key-sorted."""
+def test_deterministic_json_report_schema_and_subkeys():
+    """Verify that generated JSON diagnostic reports match all 7 required top-level keys AND all nested sub-keys."""
     spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
     trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
     valgrind = ValgrindSummary(filepath="valgrind.txt")
@@ -478,7 +538,11 @@ def test_deterministic_json_report_schema_and_values():
     parsed = json.loads(json_1)
     assert list(parsed.keys()) == REQUIRED_JSON_SCHEMA_KEYS
 
-    # 3. Assert value correctness
+    # 3. Assert all nested sub-keys for all sections
+    for section, expected_keys in REQUIRED_SUBKEYS.items():
+        assert sorted(parsed[section].keys()) == sorted(expected_keys)
+
+    # 4. Assert value correctness
     assert parsed["risk_scores"]["risk_level"] == "LOW"
     assert parsed["solver_stability_summary"]["converged"] is True
     assert parsed["precedence_analysis"]["precedence_tier"] == 5
@@ -552,6 +616,10 @@ def test_cli_end_to_end_pipeline_execution():
 
         report_data = json.loads(Path(out_p).read_text(encoding="utf-8"))
         assert list(report_data.keys()) == REQUIRED_JSON_SCHEMA_KEYS
+
+        for section, expected_keys in REQUIRED_SUBKEYS.items():
+            assert sorted(report_data[section].keys()) == sorted(expected_keys)
+
         assert report_data["precedence_analysis"]["precedence_tier"] == 1
         assert (
             report_data["precedence_analysis"]["root_cause"]
