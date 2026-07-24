@@ -27,7 +27,7 @@ def resolve_evidence_precedence(
     # Check Tier 1: Critical Memory Corruption (Valgrind Invalid Writes/Frees)
     if valgrind.has_critical_memory_corruption:
         precedence_tier = 1
-        root_cause = "Heap Memory Corruption (Valgrind Memory Safety Failure)"
+        root_cause = "Valgrind Memory Corruption (Invalid Write / Free)"
         rationale = (
             f"Valgrind reported {valgrind.invalid_writes} invalid write(s) and {valgrind.invalid_frees} invalid free(s). "
             "According to Qualification Manual Tier 1 rules, memory corruption supercedes downstream solver crashes or residuals."
@@ -65,9 +65,7 @@ def resolve_evidence_precedence(
     # Check Tier 3: Floating Point Arithmetic Crash (GDB SIGFPE)
     elif gdb.is_sigfpe:
         precedence_tier = 3
-        root_cause = (
-            "Numerical Floating Point Exception (Division by Zero / NaN Invalidation)"
-        )
+        root_cause = "GDB SIGFPE Arithmetic Exception"
         fault_fn = gdb.frames[0].function if gdb.frames else "unknown solver routine"
         rationale = (
             f"GDB caught SIGFPE arithmetic exception in '{fault_fn}'. "
@@ -84,7 +82,7 @@ def resolve_evidence_precedence(
     # Check Tier 5: Algorithmic Solver Instability / Damping Failure
     else:
         precedence_tier = 5
-        root_cause = f"Solver Damping Regime Instability: {regime_name}"
+        root_cause = f"Algorithmic Damping Instability: {regime_name}"
         rationale = f"Execution completed without fatal crash signals. Stability risk is governed by solver residual damping regime ({regime_name})."
 
     return {

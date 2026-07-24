@@ -11,11 +11,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Add solution package path
-sys.path.insert(0, str(Path(__file__).parent.parent / "solution"))
-sys.path.insert(0, str(Path(__file__).parent.parent))
+
 
 from apptainer_diag.analyzer import (
+    calculate_risk_scores,
     classify_damping_regime,
     convert_conductivity_to_m_per_sec,
     convert_flux_to_m3_per_sec,
@@ -73,21 +72,26 @@ def test_unit_conversions():
     # Pressure Head -> meters
     assert abs(convert_head_to_meters(10.0, "ft") - 3.048) < 1e-4
     assert abs(convert_head_to_meters(9806.65, "Pa") - 1.0) < 1e-4
+    assert abs(convert_head_to_meters(1.0, "bar") - 10.1972) < 1e-3
+    assert abs(convert_head_to_meters(1.0, "psi") - 0.70307) < 1e-4
 
     # Volumetric Flux -> m3/s
+    assert abs(convert_flux_to_m3_per_sec(15850.32, "gpm") - 1.0) < 1e-4
+    assert abs(convert_flux_to_m3_per_sec(1.0, "cfs") - 0.0283168) < 1e-6
     assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/day") - 1.0) < 1e-5
     assert abs(convert_flux_to_m3_per_sec(60000.0, "L/min") - 1.0) < 1e-5
 
     # Conductivity K -> m/s
     assert abs(convert_conductivity_to_m_per_sec(86400.0, "m/day") - 1.0) < 1e-5
+    assert abs(convert_conductivity_to_m_per_sec(283464.57, "ft/day") - 1.0) < 1e-4
 
     # Time -> seconds
     assert convert_time_to_seconds(1.0, "hours") == 3600.0
     assert convert_time_to_seconds(2.0, "days") == 172800.0
 
 
-def test_solver_damping_regimes():
-    """Verify classification of solver damping regimes."""
+def test_all_five_solver_damping_regimes():
+    """Verify classification of all five solver damping regimes."""
     # 1. Optimal Damping
     trace_opt = SolverTrace(
         filepath="",
@@ -106,9 +110,70 @@ def test_solver_damping_regimes():
     )
     regime, risk, _ = classify_damping_regime(trace_opt)
     assert regime == "Optimal Damping"
-    assert risk < 20.0
+    assert risk == 10.0
 
-    # 2. Divergent Damping Instability
+    # 2. Over-Damped Stagnation
+    trace_stagnant = SolverTrace(
+        filepath="",
+        records=[
+            ResidualRecord(
+                iteration=i,
+                time_step=1,
+                dt_seconds=1.0,
+                residual_head_m=0.5,
+                residual_flux_m3_s=0.0,
+                norm_ratio=0.99,
+            )
+            for i in range(1, 8)
+        ],
+        converged=False,
+    )
+    regime, risk, _ = classify_damping_regime(trace_stagnant)
+    assert regime == "Over-Damped Stagnation"
+    assert risk == 60.0
+
+    # 3. Under-Damped Oscillation
+    oscillating_ratios = [1.0, 1.25, 0.70, 1.30, 0.65, 1.20]
+    trace_oscillating = SolverTrace(
+        filepath="",
+        records=[
+            ResidualRecord(
+                iteration=i + 1,
+                time_step=1,
+                dt_seconds=1.0,
+                residual_head_m=r,
+                residual_flux_m3_s=0.0,
+                norm_ratio=r,
+            )
+            for i, r in enumerate(oscillating_ratios)
+        ],
+        converged=False,
+    )
+    regime, risk, _ = classify_damping_regime(trace_oscillating)
+    assert regime == "Under-Damped Oscillation"
+    assert risk == 75.0
+
+    # 4. Incomplete / Slow Convergence
+    trace_slow = SolverTrace(
+        filepath="",
+        records=[
+            ResidualRecord(
+                iteration=i,
+                time_step=1,
+                dt_seconds=1.0,
+                residual_head_m=0.1,
+                residual_flux_m3_s=0.0,
+                norm_ratio=0.1,
+            )
+            for i in range(1, 4)
+        ],
+        converged=False,
+    )
+    regime, risk, _ = classify_damping_regime(trace_slow)
+    assert regime == "Incomplete / Slow Convergence"
+    assert risk == 50.0
+
+    # 5. Divergent Damping Instability
     trace_div = SolverTrace(
         filepath="",
         records=[
@@ -189,8 +254,9 @@ def test_precedence_tier_1_memory_safety_override():
     res = resolve_evidence_precedence(spec, trace, valgrind, gdb, regime)
 
     assert res["precedence_tier"] == 1
-    assert "Heap Memory Corruption" in res["root_cause"]
+    assert res["root_cause"] == "Valgrind Memory Corruption (Invalid Write / Free)"
     assert res["valgrind_override_applied"] is True
+    assert len(res["contradictions_resolved"]) > 0
 
 
 def test_precedence_tier_2_container_oom():
@@ -205,7 +271,58 @@ def test_precedence_tier_2_container_oom():
 
     res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Sub-Optimal Damping")
     assert res["precedence_tier"] == 2
-    assert "Resource Limit Exhaustion" in res["root_cause"]
+    assert res["root_cause"] == "Apptainer Container Resource Limit Exhaustion (OOM)"
+
+
+def test_precedence_tier_3_gdb_sigfpe():
+    """Verify Tier 3: GDB SIGFPE arithmetic exception when Valgrind is clean."""
+    spec = parse_apptainer_spec("")
+    trace = parse_solver_residuals("")
+    valgrind = parse_valgrind_summary("")
+    gdb = parse_gdb_backtrace("")
+    gdb.signal = "SIGFPE"
+    gdb.is_sigfpe = True
+
+    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
+    assert res["precedence_tier"] == 3
+    assert res["root_cause"] == "GDB SIGFPE Arithmetic Exception"
+
+
+def test_precedence_tier_4_gdb_sigsegv():
+    """Verify Tier 4: GDB SIGSEGV segmentation fault without Valgrind invalid writes."""
+    spec = parse_apptainer_spec("")
+    trace = parse_solver_residuals("")
+    valgrind = parse_valgrind_summary("")
+    gdb = parse_gdb_backtrace("")
+    gdb.signal = "SIGSEGV"
+    gdb.is_sigsegv = True
+
+    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
+    assert res["precedence_tier"] == 4
+    assert (
+        res["root_cause"]
+        == "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
+    )
+
+
+def test_risk_scoring_formula():
+    """Verify 45% / 40% / 15% weighted risk score calculation."""
+    spec = ContainerSpec(filepath="")
+    trace = SolverTrace(filepath="")
+    valgrind = ValgrindSummary(
+        filepath="", invalid_writes=1, has_critical_memory_corruption=True
+    )
+    gdb = GdbBacktrace(filepath="")
+
+    scores = calculate_risk_scores(
+        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
+    )
+    expected_overall = (
+        0.45 * scores.memory_safety_risk
+        + 0.40 * scores.numerical_convergence_risk
+        + 0.15 * scores.resource_constraint_risk
+    )
+    assert abs(scores.overall_score - round(expected_overall, 2)) < 0.01
 
 
 def test_deterministic_json_report_and_values():
@@ -226,10 +343,12 @@ def test_deterministic_json_report_and_values():
     parsed = json.loads(json_1)
     assert list(parsed.keys()) == sorted(parsed.keys())
 
-    # 3. Assert value correctness
+    # 3. Assert value correctness and key names
     assert parsed["risk_scores"]["risk_level"] == "LOW"
     assert parsed["solver_stability_summary"]["converged"] is True
     assert parsed["precedence_analysis"]["precedence_tier"] == 5
+    assert "qualitative_assessment" in parsed
+    assert "contradictions_resolved" in parsed["precedence_analysis"]
 
 
 def test_setuptools_packaging_and_cli_entrypoint():

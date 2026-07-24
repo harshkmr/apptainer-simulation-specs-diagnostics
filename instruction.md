@@ -12,7 +12,8 @@ The package must parse four distinct diagnostic file inputs:
 #### 2. Physical Unit Conversions
 Normalize all input quantities to SI units:
 - **Pressure Head (h)**: ft to m (x 0.3048), Pa to m (/ 9806.65), bar to m (x 10.1972), psi to m (x 0.70307).
-- **Volumetric Flux (Q)**: gpm to m3/s (/ 15850.32), cfs to m3/s (x 0.0283168), m3/d to m3/s (/ 86400).
+- **Volumetric Flux (Q)**: gpm to m3/s (/ 15850.32), cfs to m3/s (x 0.0283168), m3/d or m3/day to m3/s (/ 86400), L/min to m3/s (/ 60000).
+- **Hydraulic Conductivity (K)**: m/day to m/s (/ 86400), ft/day to m/s (/ 283464.57), cm/s to m/s (/ 100).
 - **Time Step (dt)**: min to s (x 60), hours to s (x 3600), days to s (x 86400).
 
 #### 3. Damping Regime Classifier
@@ -25,7 +26,7 @@ Classify the solver residual convergence behavior across iteration histories int
 
 #### 4. Precedence Hierarchy Resolver
 Disentangle contradictory diagnostic signals by applying a strict 5-tier root-cause precedence hierarchy:
-- **Tier 1 - Valgrind Memory Corruption**: If has_critical_memory_corruption is true, override downstream GDB SIGFPE crashes or solver divergence. Set precedence_tier = 1, valgrind_override_applied = True, and root_cause = "Valgrind Memory Corruption (Invalid Write / Free)".
+- **Tier 1 - Valgrind Memory Corruption**: If has_critical_memory_corruption is true, override downstream GDB SIGFPE crashes or solver divergence. Set precedence_tier = 1, valgrind_override_applied = True, contradictions_resolved list, and root_cause = "Valgrind Memory Corruption (Invalid Write / Free)".
 - **Tier 2 - Container Resource Limit Exhaustion**: If execution exceeded memory_limit_mb or walltime_seconds, set precedence_tier = 2 and root_cause = "Apptainer Container Resource Limit Exhaustion (OOM)".
 - **Tier 3 - GDB SIGFPE Exception**: If GDB caught SIGFPE and Valgrind memory check is clean, set precedence_tier = 3 and root_cause = "GDB SIGFPE Arithmetic Exception".
 - **Tier 4 - Segmentation Fault**: If GDB caught SIGSEGV without Valgrind invalid writes, set precedence_tier = 4 and root_cause = "Segmentation Fault (Null Pointer or Invalid Memory Reference)".
@@ -37,14 +38,14 @@ Overall Score = 0.45 x Memory Safety Risk + 0.40 x Solver Stability Risk + 0.15 
 Qualitative risk levels: LOW (0-25), MEDIUM (26-50), HIGH (51-75), CRITICAL (76-100).
 
 #### 6. Deterministic JSON Report Schema
-Serialize the analysis into a key-sorted JSON report (sort_keys=True) with the following top-level keys:
-- apptainer_spec_summary: { "base_image", "memory_limit_mb", "cpu_cores", "walltime_seconds", "env_vars", "labels" }
-- solver_stability_summary: { "total_iterations", "initial_residual", "final_residual", "converged", "diverged", "damping_regime", "damping_factor" }
-- valgrind_summary: { "definitely_lost_bytes", "indirectly_lost_bytes", "possibly_lost_bytes", "still_reachable_bytes", "total_errors", "invalid_writes", "invalid_reads", "invalid_frees", "uninitialized_reads", "has_critical_memory_corruption" }
-- gdb_summary: { "signal", "is_sigsegv", "is_sigfpe", "is_sigabrt", "fault_address", "top_frame_function" }
-- precedence_analysis: { "precedence_tier", "root_cause", "rationale", "valgrind_override_applied" }
-- risk_scores: { "memory_safety_score", "solver_stability_score", "resource_limit_score", "overall_score", "risk_level" }
-- assessment: List of human-readable assessment strings.
+Serialize the analysis into a key-sorted JSON report (sort_keys=True) with the following exact top-level keys:
+- apptainer_spec_summary: { "base_image", "cpu_cores", "environment_vars", "filepath", "labels", "memory_limit_mb", "walltime_seconds" }
+- solver_stability_summary: { "converged", "damping_factor", "damping_regime", "diverged", "filepath", "final_residual_norm", "initial_residual_norm", "regime_explanation", "total_iterations" }
+- valgrind_summary: { "definitely_lost_bytes", "filepath", "has_critical_memory_corruption", "indirectly_lost_bytes", "invalid_frees", "invalid_reads", "invalid_writes", "possibly_lost_bytes", "still_reachable_bytes", "total_errors", "uninitialized_reads" }
+- gdb_summary: { "crash_thread", "fault_address", "filepath", "frames", "is_sigabrt", "is_sigfpe", "is_sigsegv", "signal" }
+- precedence_analysis: { "contradictions_resolved", "precedence_tier", "rationale", "root_cause", "valgrind_override_applied" }
+- risk_scores: { "memory_safety_risk", "numerical_convergence_risk", "overall_score", "resource_constraint_risk", "risk_level" }
+- qualitative_assessment: List of human-readable assessment strings.
 
 #### 7. Packaging and CLI Interface
 Package the project using setuptools in solution/setup.py exposing a CLI entrypoint apptainer-diag.
