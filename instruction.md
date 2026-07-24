@@ -1,4 +1,4 @@
-Analyze simulation execution logs, container specifications, and diagnostic dumps for finite-volume groundwater modeling runs. Build an offline Python data analysis tool (`apptainer_diag`) packaged via `setuptools` with CLI entrypoint `apptainer-diag`.
+Develop a scientific computing numerical diagnostics tool (`apptainer_diag`) for analyzing finite-volume groundwater simulation execution logs, Apptainer container specifications, Valgrind memory traces, and GDB crash dumps. Package the project using `setuptools` with CLI entrypoint `apptainer-diag`.
 
 ### Key Requirements
 
