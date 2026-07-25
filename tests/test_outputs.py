@@ -803,13 +803,13 @@ def test_resource_constraint_risk_percentage_thresholds():
 
     # >50% of container memory (60 MB leak with 100 MB limit) -> +80.0
     spec1 = ContainerSpec(filepath="", memory_limit_mb=100.0)
-    val1 = ValgrindSummary(filepath="", definitely_lost_bytes=int(60 * 1024 * 1024))
+    val1 = ValgrindSummary(filepath="", definitely_lost_bytes=60 * 1024 * 1024)
     scores1 = calculate_risk_scores(spec1, trace, val1, gdb, "Optimal Damping", 10.0)
     assert scores1.resource_constraint_risk == 80.0
 
     # >20% of container memory (25 MB leak with 100 MB limit) -> +50.0
     spec2 = ContainerSpec(filepath="", memory_limit_mb=100.0)
-    val2 = ValgrindSummary(filepath="", definitely_lost_bytes=int(25 * 1024 * 1024))
+    val2 = ValgrindSummary(filepath="", definitely_lost_bytes=25 * 1024 * 1024)
     scores2 = calculate_risk_scores(spec2, trace, val2, gdb, "Optimal Damping", 10.0)
     assert scores2.resource_constraint_risk == 50.0
 
