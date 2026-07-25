@@ -620,7 +620,17 @@ def test_cli_end_to_end_pipeline_execution():
         assert res.returncode == 0
         assert os.path.exists(out_p)
 
-        report_data = json.loads(Path(out_p).read_text(encoding="utf-8"))
+        # 1. Verify stdout contains valid JSON and matches the report written to file
+        stdout_parsed = json.loads(res.stdout)
+
+        raw_text = Path(out_p).read_text(encoding="utf-8")
+        report_data = json.loads(raw_text)
+        assert stdout_parsed == report_data
+
+        # 2. Verify raw file formatting follows sort_keys=True, indent=2
+        expected_text = json.dumps(report_data, sort_keys=True, indent=2)
+        assert raw_text.strip() == expected_text.strip()
+
         assert list(report_data.keys()) == REQUIRED_JSON_SCHEMA_KEYS
 
         for section, expected_keys in REQUIRED_SUBKEYS.items():
@@ -711,8 +721,10 @@ def test_cli_stdout_output_mode():
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         assert res.returncode == 0
-        assert "risk_scores" in res.stdout
-        assert "apptainer_spec_summary" in res.stdout
+        parsed = json.loads(res.stdout)
+        assert list(parsed.keys()) == REQUIRED_JSON_SCHEMA_KEYS
+        expected_fmt = json.dumps(parsed, sort_keys=True, indent=2)
+        assert res.stdout.strip() == expected_fmt.strip()
 
 
 def test_cli_empty_output_skips_file():
