@@ -753,10 +753,11 @@ def test_cli_empty_output_skips_file():
         assert res.returncode == 0
         # No report.json should be created when --output "" is passed
         assert not os.path.exists(os.path.join(tmpdir, "report.json"))
-        # Stdout should contain valid JSON with required keys
+        # Stdout should contain valid JSON matching complete required schema & sub-keys
         parsed = json.loads(res.stdout)
-        assert "risk_scores" in parsed
-        assert "apptainer_spec_summary" in parsed
+        assert list(parsed.keys()) == REQUIRED_JSON_SCHEMA_KEYS
+        for section, expected_keys in REQUIRED_SUBKEYS.items():
+            assert sorted(parsed[section].keys()) == sorted(expected_keys)
 
 
 def test_parse_apptainer_spec_dot_spec_format():
