@@ -45,8 +45,15 @@ def main():
     gdb = parse_gdb_backtrace(args.gdb)
 
     report = generate_diagnostic_report(spec, trace, valgrind, gdb)
-    output_target = args.output if args.output else "report.json"
-    json_out = serialize_report_to_json(report, output_target)
+
+    # Determine output target: None means --output was not provided (use default),
+    # empty string means stdout-only (skip file writing).
+    if args.output == "":
+        # --output "" explicitly passed: stdout only, no file
+        json_out = serialize_report_to_json(report, None)
+    else:
+        # --output <path> or default "report.json"
+        json_out = serialize_report_to_json(report, args.output)
     print(json_out)
 
 

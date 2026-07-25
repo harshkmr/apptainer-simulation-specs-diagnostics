@@ -547,6 +547,12 @@ def test_deterministic_json_report_schema_and_subkeys():
     assert parsed["solver_stability_summary"]["converged"] is True
     assert parsed["precedence_analysis"]["precedence_tier"] == 5
 
+    # 5. Assert qualitative_assessment is a non-empty list of meaningful strings
+    qa = parsed["qualitative_assessment"]
+    assert isinstance(qa, list)
+    assert len(qa) > 0
+    assert all(isinstance(s, str) and len(s) > 10 for s in qa)
+
 
 def test_cli_end_to_end_pipeline_execution():
     """Verify full end-to-end execution of apptainer-diag CLI entrypoint with input files and --output JSON validation."""
@@ -707,3 +713,84 @@ def test_cli_stdout_output_mode():
         assert res.returncode == 0
         assert "risk_scores" in res.stdout
         assert "apptainer_spec_summary" in res.stdout
+
+
+def test_cli_empty_output_skips_file():
+    """Verify --output '' (empty string) skips file writing and prints exclusively to stdout."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spec_p = os.path.join(tmpdir, "Apptainer.def")
+        res_p = os.path.join(tmpdir, "solver.log")
+
+        with open(spec_p, "w") as f:
+            f.write("Bootstrap: docker\nFrom: ubuntu:22.04\n")
+        with open(res_p, "w") as f:
+            f.write("CONVERGED\n")
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "apptainer_diag.cli",
+            "--spec",
+            spec_p,
+            "--residuals",
+            res_p,
+            "--output",
+            "",
+        ]
+        res = subprocess.run(cmd, cwd=tmpdir, capture_output=True, text=True, check=False)
+        assert res.returncode == 0
+        # No report.json should be created when --output "" is passed
+        assert not os.path.exists(os.path.join(tmpdir, "report.json"))
+        # Stdout should contain valid JSON with required keys
+        parsed = json.loads(res.stdout)
+        assert "risk_scores" in parsed
+        assert "apptainer_spec_summary" in parsed
+
+
+def test_parse_apptainer_spec_dot_spec_format():
+    """Verify parsing of Apptainer container spec from a .spec file (same format as .def)."""
+    content = """Bootstrap: docker
+From: centos:8
+
+%environment
+    export MEMORY_LIMIT_MB=8192
+    export CPU_CORES=8
+    export WALLTIME_SECONDS=7200
+
+%labels
+    Author SimTeam
+"""
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".spec") as f:
+        f.write(content)
+        temp_path = f.name
+
+    try:
+        spec = parse_apptainer_spec(temp_path)
+        assert spec.base_image == "centos:8"
+        assert spec.memory_limit_mb == 8192.0
+        assert spec.cpu_cores == 8.0
+        assert spec.walltime_seconds == 7200.0
+        assert spec.labels.get("Author") == "SimTeam"
+    finally:
+        os.remove(temp_path)
+
+
+def test_qualitative_assessment_content():
+    """Verify qualitative_assessment contains meaningful human-readable summary strings."""
+    spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
+    trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
+    valgrind = ValgrindSummary(filepath="valgrind.txt", invalid_writes=1, has_critical_memory_corruption=True)
+    gdb = GdbBacktrace(filepath="gdb.txt", signal="SIGFPE", is_sigfpe=True)
+
+    report = generate_diagnostic_report(spec, trace, valgrind, gdb)
+    json_str = serialize_report_to_json(report)
+    parsed = json.loads(json_str)
+
+    qa = parsed["qualitative_assessment"]
+    assert isinstance(qa, list)
+    assert len(qa) > 0
+    assert all(isinstance(s, str) and len(s) > 10 for s in qa)
+    # Should mention risk level and root cause somewhere in the assessment
+    full_text = " ".join(qa)
+    assert "Risk Level" in full_text or "risk" in full_text.lower()
+    assert "Root Cause" in full_text or "root" in full_text.lower()
