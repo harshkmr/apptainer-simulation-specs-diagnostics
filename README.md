@@ -12,7 +12,7 @@ An offline diagnostic analysis engine and Snorkel Terminal-Bench benchmark task 
 
 Finite-volume groundwater simulations packaged in Apptainer containers often fail due to complex interactions between low-level C memory corruption, container resource constraints, and mathematical PDE solver divergence. 
 
-This repository implements a modular diagnostic tool (`apptainer_diag`) that ingests heterogeneous diagnostic logs, performs dimensional normalization across physical groundwater units, classifies solver residual damping regimes, and resolves contradictory crash signals using a strict 4-tier precedence hierarchy.
+This repository implements a modular diagnostic tool (`apptainer_diag`) that ingests heterogeneous diagnostic logs, performs dimensional normalization across physical groundwater units, classifies solver residual damping regimes, and resolves contradictory crash signals using a strict 5-tier precedence hierarchy.
 
 ---
 
@@ -35,22 +35,23 @@ flowchart TD
 
 | Module | Location | Purpose |
 | :--- | :--- | :--- |
-| **Parsers** | `solution/apptainer_diag/parsers/` | Ingests Apptainer spec limits, GDB signals (`SIGSEGV`, `SIGFPE`), Valgrind memory leaks, and residual traces into typed models. |
+| **Parsers** | `solution/apptainer_diag/parsers/` | Ingests Apptainer spec limits, GDB signals (`SIGSEGV`, `SIGFPE`, `SIGABRT`, `SIGKILL`), Valgrind memory leaks, and residual traces into typed models. |
 | **Unit Normalizer** | `solution/apptainer_diag/analyzer/unit_converter.py` | Normalizes pressure heads ($ft, Pa, bar \to m$), volumetric flow rates ($gpm, m^3/d \to m^3/s$), and time steps ($hours \to s$). |
 | **Damping Classifier** | `solution/apptainer_diag/analyzer/stability_scorer.py` | Analyzes norm ratios ($||r_{k+1}|| / ||r_k||$) across iteration histories to classify regimes (*Optimal*, *Stagnant*, *Oscillating*, *Divergent*). |
-| **Precedence Resolver** | `solution/apptainer_diag/analyzer/precedence_resolver.py` | Resolves contradictory evidence using a 4-tier hierarchy to identify the primary root cause. |
+| **Precedence Resolver** | `solution/apptainer_diag/analyzer/precedence_resolver.py` | Resolves contradictory evidence using a 5-tier hierarchy to identify the primary root cause. |
 | **Deterministic Reporter** | `solution/apptainer_diag/reporter.py` | Serializes component risk scores and precedence rationale into a key-sorted JSON report (`sort_keys=True`). |
 
 ---
 
 ## ⚖️ Precedence Hierarchy Rules
 
-When diagnostic logs contain conflicting crash evidence, the engine applies a strict 4-tier rule hierarchy:
+When diagnostic logs contain conflicting crash evidence, the engine applies a strict 5-tier rule hierarchy:
 
 1. **Tier 1 — Valgrind Memory Corruption**: `Invalid write` or `Invalid free` takes top precedence over downstream GDB crash signals or matrix non-convergence.
 2. **Tier 2 — Container Resource Limits**: Out-Of-Memory (OOM) or walltime breaches override solver divergence.
 3. **Tier 3 — GDB SIGFPE Exception**: Pure floating-point arithmetic errors in numerical routines (when Valgrind is clean).
-4. **Tier 4 — Algorithmic Damping Instability**: Solver non-convergence or time-stepping instability.
+4. **Tier 4 — GDB SIGSEGV / SIGABRT Signals**: Segmentation faults or abort signal exceptions (when higher tier memory corruption / OOM is absent).
+5. **Tier 5 — Algorithmic Damping Instability**: Solver non-convergence or time-stepping instability.
 
 ---
 

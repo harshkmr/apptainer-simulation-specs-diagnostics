@@ -776,7 +776,7 @@ From: centos:8
 
 
 def test_qualitative_assessment_content():
-    """Verify qualitative_assessment contains meaningful human-readable summary strings."""
+    """Verify qualitative_assessment contains meaningful human-readable summary strings matching computed state."""
     spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
     trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
     valgrind = ValgrindSummary(filepath="valgrind.txt", invalid_writes=1, has_critical_memory_corruption=True)
@@ -788,9 +788,45 @@ def test_qualitative_assessment_content():
 
     qa = parsed["qualitative_assessment"]
     assert isinstance(qa, list)
-    assert len(qa) > 0
+    assert len(qa) >= 3
     assert all(isinstance(s, str) and len(s) > 10 for s in qa)
-    # Should mention risk level and root cause somewhere in the assessment
+
     full_text = " ".join(qa)
-    assert "Risk Level" in full_text or "risk" in full_text.lower()
-    assert "Root Cause" in full_text or "root" in full_text.lower()
+    assert "CRITICAL" in full_text
+    assert "Valgrind Memory Corruption" in full_text
+
+
+def test_resource_constraint_risk_percentage_thresholds():
+    """Verify resource_constraint_risk adds +80.0 for leak > 50% container limit, and +50.0 for leak > 20% limit."""
+    trace = SolverTrace(filepath="")
+    gdb = GdbBacktrace(filepath="")
+
+    # >50% of container memory (60 MB leak with 100 MB limit) -> +80.0
+    spec1 = ContainerSpec(filepath="", memory_limit_mb=100.0)
+    val1 = ValgrindSummary(filepath="", definitely_lost_bytes=int(60 * 1024 * 1024))
+    scores1 = calculate_risk_scores(spec1, trace, val1, gdb, "Optimal Damping", 10.0)
+    assert scores1.resource_constraint_risk == 80.0
+
+    # >20% of container memory (25 MB leak with 100 MB limit) -> +50.0
+    spec2 = ContainerSpec(filepath="", memory_limit_mb=100.0)
+    val2 = ValgrindSummary(filepath="", definitely_lost_bytes=int(25 * 1024 * 1024))
+    scores2 = calculate_risk_scores(spec2, trace, val2, gdb, "Optimal Damping", 10.0)
+    assert scores2.resource_constraint_risk == 50.0
+
+
+def test_signal_minimum_risk_scores_enforcement():
+    """Verify SIGSEGV enforces memory_safety_risk >= 85.0 and SIGFPE enforces numerical_convergence_risk >= 95.0."""
+    spec = ContainerSpec(filepath="")
+    trace = SolverTrace(filepath="")
+    valgrind = ValgrindSummary(filepath="")
+
+    # SIGSEGV min-85 for memory_safety_risk without critical corruption
+    gdb_segv = GdbBacktrace(filepath="", signal="SIGSEGV", is_sigsegv=True)
+    scores_segv = calculate_risk_scores(spec, trace, valgrind, gdb_segv, "Optimal Damping", 10.0)
+    assert scores_segv.memory_safety_risk >= 85.0
+
+    # SIGFPE min-95 for numerical_convergence_risk
+    gdb_fpe = GdbBacktrace(filepath="", signal="SIGFPE", is_sigfpe=True)
+    scores_fpe = calculate_risk_scores(spec, trace, valgrind, gdb_fpe, "Optimal Damping", 10.0)
+    assert scores_fpe.numerical_convergence_risk >= 95.0
+
