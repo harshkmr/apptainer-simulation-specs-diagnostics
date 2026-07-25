@@ -57,3 +57,11 @@ Build a Python command-line diagnostic tool (`apptainer_diag`) for analyzing fin
    - `precedence_analysis` (dict): `contradictions_resolved`, `precedence_tier`, `rationale`, `root_cause`, `valgrind_override_applied`
    - `risk_scores` (dict): `memory_safety_risk`, `numerical_convergence_risk`, `overall_score`, `resource_constraint_risk`, `risk_level`
    - `qualitative_assessment` (list of strings): List of human-readable summary findings.
+
+8. **Package Module Architecture & Public API Specification**:
+   Organize the `apptainer_diag` package into submodules exposing the following typed data models and functions:
+   - `apptainer_diag.models`: Typed data structures (`ContainerSpec`, `SolverTrace`, `ValgrindSummary`, `GdbBacktrace`, `ResidualRecord`, `RiskScore`).
+   - `apptainer_diag.parsers`: Ingestion functions (`parse_apptainer_spec`, `parse_solver_residuals`, `parse_valgrind_summary`, `parse_gdb_backtrace`).
+   - `apptainer_diag.analyzer`: Diagnostic engine routines (`convert_head_to_meters`, `convert_flux_to_m3_per_sec`, `convert_conductivity_to_m_per_sec`, `convert_time_to_seconds`, `classify_damping_regime`, `resolve_evidence_precedence`, `calculate_risk_scores`).
+   - `apptainer_diag.reporter`: Report generation (`generate_diagnostic_report`, `serialize_report_to_json`).
+   - `apptainer_diag.cli`: Entrypoint module containing `main()`.
