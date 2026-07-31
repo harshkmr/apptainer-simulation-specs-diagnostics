@@ -31,7 +31,7 @@ Build a Python command-line diagnostic tool (`apptainer_diag`) for analyzing fin
 5. **5-Tier Root-Cause Precedence Hierarchy**:
    Resolve evidence conflicts between container limits, memory traces, signals, and solver logs using a 5-tier root-cause hierarchy:
    - **Tier 1**: Valgrind Memory Corruption (`has_critical_memory_corruption = true`). Overrides downstream GDB signals or solver divergence. Root cause: `"Valgrind Memory Corruption (Invalid Write / Free)"`. `valgrind_override_applied = true`.
-   - **Tier 2**: Container OOM Limit Exhaustion (`signal == "SIGKILL"` or `OOM` in container env vars). Root cause: `"Apptainer Container Resource Limit Exhaustion (OOM)"`.
+   - **Tier 2**: Container OOM Limit Exhaustion (`signal == "SIGKILL"`, `OOM` in container env vars, or `definitely_lost_bytes` exceeding `memory_limit_mb`). Root cause: `"Apptainer Container Resource Limit Exhaustion (OOM)"`.
    - **Tier 3**: GDB SIGFPE Arithmetic Exception (`is_sigfpe = true`). Root cause: `"GDB SIGFPE Arithmetic Exception"`.
    - **Tier 4**: GDB SIGSEGV (`is_sigsegv = true`, root cause: `"Segmentation Fault (Null Pointer or Invalid Memory Reference)"`) or GDB SIGABRT (`is_sigabrt = true`, root cause: `"GDB SIGABRT Abort Signal Exception"`).
    - **Tier 5**: Algorithmic Damping Instability or Solver Non-Convergence. Root cause derived directly from solver damping regime explanation.

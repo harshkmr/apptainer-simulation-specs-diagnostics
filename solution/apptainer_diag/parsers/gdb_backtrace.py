@@ -49,6 +49,13 @@ def parse_gdb_backtrace(filepath: str) -> GdbBacktrace:
     if addr_match:
         bt.fault_address = addr_match.group(1)
 
+    # Detect crash thread ID (e.g. Thread 1 or Current thread is 1)
+    thread_match = re.search(
+        r"(?:[Cc]urrent thread is|Thread)\s+(\d+)", content
+    )
+    if thread_match:
+        bt.crash_thread = int(thread_match.group(1))
+
     # Parse backtrace frames: e.g. #0  0x00007f... in solve_matrix (a=0x0, b=0x1) at solver.c:45
     frame_pattern = re.compile(
         r"#(\d+)\s+(?:(0x[0-9a-fA-F]+)\s+in\s+)?([^\(\n\r]+)(?:\([^\)]*\))?(?:\s+at\s+([^:\n\r]+):(\d+))?",

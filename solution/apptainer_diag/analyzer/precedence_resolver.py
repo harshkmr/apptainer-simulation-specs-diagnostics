@@ -47,9 +47,13 @@ def resolve_evidence_precedence(
             )
 
     # Check Tier 2: Container Resource Limits / Out-Of-Memory (OOM)
-    elif gdb.signal == "SIGKILL" or (
-        spec.memory_limit_mb
-        and valgrind.definitely_lost_bytes / (1024 * 1024) > spec.memory_limit_mb
+    elif (
+        gdb.signal == "SIGKILL"
+        or any("OOM" in str(k).upper() or "OOM" in str(v).upper() for k, v in spec.env_vars.items())
+        or (
+            spec.memory_limit_mb
+            and valgrind.definitely_lost_bytes / (1024 * 1024) > spec.memory_limit_mb
+        )
     ):
         precedence_tier = 2
         root_cause = "Apptainer Container Resource Limit Exhaustion (OOM)"

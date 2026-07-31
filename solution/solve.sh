@@ -12,16 +12,15 @@ else
     PYTHON_CMD="python3"
 fi
 
-# Install package using pip with fallback flags for externally-managed environments (Python 3.13 / Debian)
+# Attempt standard pip installation with flags for externally-managed & python 3.13 envs
 $PYTHON_CMD -m pip install --break-system-packages --no-deps -e "$SCRIPT_DIR" 2>/dev/null || \
 $PYTHON_CMD -m pip install --break-system-packages --no-deps "$SCRIPT_DIR" 2>/dev/null || \
 $PYTHON_CMD -m pip install --no-deps -e "$SCRIPT_DIR" 2>/dev/null || \
-$PYTHON_CMD -m pip install --no-deps "$SCRIPT_DIR" 2>/dev/null || \
-$PYTHON_CMD -m pip install --user --no-deps "$SCRIPT_DIR" 2>/dev/null || true
+$PYTHON_CMD -m pip install --no-deps "$SCRIPT_DIR" 2>/dev/null || true
 
-# Ensure site-packages or user-site has apptainer_diag available
+# Always guarantee apptainer_diag Python package is installed in site-packages
 SITE_PACKAGES=$($PYTHON_CMD -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
-if [ -n "$SITE_PACKAGES" ] && [ -d "$SITE_PACKAGES" ] && [ -w "$SITE_PACKAGES" ]; then
+if [ -n "$SITE_PACKAGES" ] && [ -d "$SITE_PACKAGES" ]; then
     cp -r "$SCRIPT_DIR/apptainer_diag" "$SITE_PACKAGES/" 2>/dev/null || true
 fi
 
@@ -31,8 +30,20 @@ if [ -n "$USER_SITE" ]; then
     cp -r "$SCRIPT_DIR/apptainer_diag" "$USER_SITE/" 2>/dev/null || true
 fi
 
-# Verify installation and entrypoint
-$PYTHON_CMD -c "import apptainer_diag; print('apptainer_diag imported successfully')"
+# Always guarantee apptainer-diag executable entrypoint binary exists on PATH
+BIN_WRAPPER="#!/bin/sh
+exec $PYTHON_CMD -m apptainer_diag.cli \"\$@\"
+"
+
+for bin_dir in "/usr/local/bin" "/usr/bin" "$HOME/.local/bin"; do
+    if [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null; then
+        (echo "$BIN_WRAPPER" > "$bin_dir/apptainer-diag") 2>/dev/null || true
+        chmod +x "$bin_dir/apptainer-diag" 2>/dev/null || true
+    fi
+done
+
+# Verify package import and CLI entrypoint
+$PYTHON_CMD -c "import apptainer_diag; print('apptainer_diag package import SUCCESS')"
 
 echo "Oracle solution executed successfully."
 exit 0

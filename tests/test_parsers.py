@@ -153,6 +153,7 @@ def test_parse_valgrind_summary():
 
 def test_parse_gdb_backtrace():
     content = """
+[Current thread is 1 (Thread 0x7ffff7fd3740)]
 Program received signal SIGSEGV, Segmentation fault.
 (fault address 0x00007ffff7a12345)
 #0  0x00007ffff7a12345 in solve_matrix (a=0x0) at solver.c:10
@@ -166,7 +167,13 @@ Program received signal SIGSEGV, Segmentation fault.
         assert gdb.signal == "SIGSEGV"
         assert gdb.is_sigsegv is True
         assert gdb.fault_address == "0x00007ffff7a12345"
+        assert gdb.crash_thread == 1
         assert len(gdb.frames) == 1
+        assert gdb.frames[0].frame_number == 0
+        assert gdb.frames[0].function == "solve_matrix"
+        assert gdb.frames[0].file == "solver.c"
+        assert gdb.frames[0].line == 10
+        assert gdb.frames[0].address == "0x00007ffff7a12345"
     finally:
         os.remove(path)
 

@@ -12,6 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir pytest==8.3.4
+RUN pip install --no-cache-dir pytest==8.3.4 setuptools==75.8.0
 
 WORKDIR /app

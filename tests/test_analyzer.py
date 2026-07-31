@@ -184,7 +184,7 @@ def test_precedence_hierarchy_all_tiers():
     assert res1["root_cause"] == "Valgrind Memory Corruption (Invalid Write / Free)"
     assert res1["valgrind_override_applied"] is True
 
-    # Tier 2: Container OOM
+    # Tier 2: Container OOM via SIGKILL
     valgrind.has_critical_memory_corruption = False
     valgrind.invalid_writes = 0
     gdb.signal = "SIGKILL"
@@ -193,6 +193,20 @@ def test_precedence_hierarchy_all_tiers():
     assert res2["precedence_tier"] == 2
     assert res2["root_cause"] == "Apptainer Container Resource Limit Exhaustion (OOM)"
 
+    # Tier 2 (Alternative Trigger 1): Container OOM via Memory Leak Exceeding Spec Limit
+    spec_oom = ContainerSpec(filepath="", memory_limit_mb=100.0)
+    val_oom = ValgrindSummary(filepath="", definitely_lost_bytes=150 * 1024 * 1024)
+    gdb_clean = GdbBacktrace(filepath="")
+    res2b = resolve_evidence_precedence(spec_oom, trace, val_oom, gdb_clean, "Optimal Damping")
+    assert res2b["precedence_tier"] == 2
+    assert res2b["root_cause"] == "Apptainer Container Resource Limit Exhaustion (OOM)"
+
+    # Tier 2 (Alternative Trigger 2): Container OOM via Environment Variable
+    spec_env_oom = ContainerSpec(filepath="", memory_limit_mb=4096.0, env_vars={"OOM_KILLER": "enabled"})
+    res2c = resolve_evidence_precedence(spec_env_oom, trace, val_oom, gdb_clean, "Optimal Damping")
+    assert res2c["precedence_tier"] == 2
+    assert res2c["root_cause"] == "Apptainer Container Resource Limit Exhaustion (OOM)"
+
     # Tier 3: GDB SIGFPE
     gdb.signal = "SIGFPE"
     gdb.is_sigfpe = True
@@ -200,13 +214,22 @@ def test_precedence_hierarchy_all_tiers():
     assert res3["precedence_tier"] == 3
     assert res3["root_cause"] == "GDB SIGFPE Arithmetic Exception"
 
-    # Tier 4: GDB SIGSEGV / SIGABRT
+    # Tier 4: GDB SIGABRT
     gdb.signal = "SIGABRT"
     gdb.is_sigfpe = False
     gdb.is_sigabrt = True
     res4 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
     assert res4["precedence_tier"] == 4
     assert res4["root_cause"] == "GDB SIGABRT Abort Signal Exception"
+
+    # Tier 4 (SIGSEGV): GDB SIGSEGV
+    gdb_segv = GdbBacktrace(filepath="", signal="SIGSEGV", is_sigsegv=True)
+    res4b = resolve_evidence_precedence(spec, trace, valgrind, gdb_segv, "Optimal Damping")
+    assert res4b["precedence_tier"] == 4
+    assert (
+        res4b["root_cause"]
+        == "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
+    )
 
     # Tier 5: Algorithmic Damping Instability
     gdb.signal = None

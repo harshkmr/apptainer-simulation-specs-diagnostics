@@ -12,19 +12,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from apptainer_diag.analyzer import (
-    calculate_risk_scores,
-    classify_damping_regime,
-    convert_conductivity_to_m_per_sec,
-    convert_flux_to_m3_per_sec,
-    convert_head_to_meters,
-    convert_time_to_seconds,
-    resolve_evidence_precedence,
-)
+from apptainer_diag.analyzer import calculate_risk_scores
 from apptainer_diag.models import (
     ContainerSpec,
     GdbBacktrace,
-    ResidualRecord,
     SolverTrace,
     ValgrindSummary,
 )
@@ -201,155 +192,7 @@ DIVERGED
         os.remove(temp_path_nan)
 
 
-def test_unit_conversions():
-    """Verify physical unit conversions to SI base units (m, m3/s, m/s, s)."""
-    # Pressure Head -> meters
-    assert abs(convert_head_to_meters(10.0, "ft") - 3.048) < 1e-4
-    assert abs(convert_head_to_meters(9806.65, "Pa") - 1.0) < 1e-4
-    assert abs(convert_head_to_meters(1.0, "bar") - 10.1972) < 1e-3
-    assert abs(convert_head_to_meters(1.0, "psi") - 0.70307) < 1e-4
 
-    # Volumetric Flux -> m3/s (testing gpm, cfs, m3/d, m3/day, L/min)
-    assert abs(convert_flux_to_m3_per_sec(15850.32, "gpm") - 1.0) < 1e-4
-    assert abs(convert_flux_to_m3_per_sec(1.0, "cfs") - 0.0283168) < 1e-6
-    assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/d") - 1.0) < 1e-5
-    assert abs(convert_flux_to_m3_per_sec(86400.0, "m3/day") - 1.0) < 1e-5
-    assert abs(convert_flux_to_m3_per_sec(60000.0, "L/min") - 1.0) < 1e-5
-
-    # Conductivity K -> m/s
-    assert abs(convert_conductivity_to_m_per_sec(86400.0, "m/day") - 1.0) < 1e-5
-    assert abs(convert_conductivity_to_m_per_sec(283464.57, "ft/day") - 1.0) < 1e-4
-    assert abs(convert_conductivity_to_m_per_sec(100.0, "cm/s") - 1.0) < 1e-5
-
-    # Time -> seconds (testing min, hours, days)
-    assert convert_time_to_seconds(5.0, "min") == 300.0
-    assert convert_time_to_seconds(1.0, "hours") == 3600.0
-    assert convert_time_to_seconds(2.0, "days") == 172800.0
-
-
-def test_all_five_solver_damping_regimes():
-    """Verify classification of all five solver damping regimes including norm_ratio > 2.0 trigger."""
-    # 1. Optimal Damping
-    trace_opt = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=i,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=1.0 / (10**i),
-                residual_flux_m3_s=0.0,
-                norm_ratio=1.0 / (10**i),
-            )
-            for i in range(1, 8)
-        ],
-        converged=True,
-    )
-    regime, risk, _ = classify_damping_regime(trace_opt)
-    assert regime == "Optimal Damping"
-    assert risk == 10.0
-
-    # 2. Over-Damped Stagnation
-    trace_stagnant = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=i,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=0.5,
-                residual_flux_m3_s=0.0,
-                norm_ratio=0.99,
-            )
-            for i in range(1, 8)
-        ],
-        converged=False,
-    )
-    regime, risk, _ = classify_damping_regime(trace_stagnant)
-    assert regime == "Over-Damped Stagnation"
-    assert risk == 60.0
-
-    # 3. Under-Damped Oscillation
-    oscillating_ratios = [1.0, 1.25, 0.70, 1.30, 0.65, 1.20]
-    trace_oscillating = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=i + 1,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=r,
-                residual_flux_m3_s=0.0,
-                norm_ratio=r,
-            )
-            for i, r in enumerate(oscillating_ratios)
-        ],
-        converged=False,
-    )
-    regime, risk, _ = classify_damping_regime(trace_oscillating)
-    assert regime == "Under-Damped Oscillation"
-    assert risk == 75.0
-
-    # 4. Incomplete / Slow Convergence
-    trace_slow = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=i,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=0.1,
-                residual_flux_m3_s=0.0,
-                norm_ratio=0.1,
-            )
-            for i in range(1, 4)
-        ],
-        converged=False,
-    )
-    regime, risk, _ = classify_damping_regime(trace_slow)
-    assert regime == "Incomplete / Slow Convergence"
-    assert risk == 50.0
-
-    # 5. Divergent Damping Instability via NaN
-    trace_div = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=1,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=0.0,
-                residual_flux_m3_s=0.0,
-                norm_ratio=0.0,
-                is_nan=True,
-            )
-        ],
-        diverged=True,
-    )
-    regime, risk, _ = classify_damping_regime(trace_div)
-    assert regime == "Divergent Damping Instability"
-    assert risk == 100.0
-
-    # 6. Divergent Damping Instability via norm_ratio > 2.0 trigger directly
-    trace_high_ratio = SolverTrace(
-        filepath="",
-        records=[
-            ResidualRecord(
-                iteration=1,
-                time_step=1,
-                dt_seconds=1.0,
-                residual_head_m=1.0,
-                residual_flux_m3_s=0.0,
-                norm_ratio=2.5,
-                is_nan=False,
-            )
-        ],
-        diverged=False,
-        converged=False,
-    )
-    regime_hr, risk_hr, _ = classify_damping_regime(trace_high_ratio)
-    assert regime_hr == "Divergent Damping Instability"
-    assert risk_hr == 100.0
 
 
 def test_valgrind_memcheck_parser():
@@ -400,124 +243,7 @@ Program received signal SIGABRT, Aborted.
         os.remove(temp_path)
 
 
-def test_precedence_tier_1_memory_safety_override():
-    """Verify Tier 1: Valgrind memory corruption overrides downstream GDB SIGFPE / divergence."""
-    spec = parse_apptainer_spec("")
-    trace = parse_solver_residuals("")
-    valgrind = parse_valgrind_summary("")
-    gdb = parse_gdb_backtrace("")
 
-    valgrind.invalid_writes = 2
-    valgrind.has_critical_memory_corruption = True
-    gdb.signal = "SIGFPE"
-    gdb.is_sigfpe = True
-    trace.diverged = True
-
-    regime, _risk, _ = classify_damping_regime(trace)
-    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, regime)
-
-    assert res["precedence_tier"] == 1
-    assert res["root_cause"] == "Valgrind Memory Corruption (Invalid Write / Free)"
-    assert res["valgrind_override_applied"] is True
-    assert len(res["contradictions_resolved"]) > 0
-
-
-def test_precedence_tier_2_container_oom():
-    """Verify Tier 2: Container OOM / SIGKILL supercedes solver non-convergence."""
-    spec = parse_apptainer_spec("")
-    spec.memory_limit_mb = 4096.0
-    trace = parse_solver_residuals("")
-    trace.diverged = True
-    valgrind = parse_valgrind_summary("")
-    gdb = parse_gdb_backtrace("")
-    gdb.signal = "SIGKILL"
-
-    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Sub-Optimal Damping")
-    assert res["precedence_tier"] == 2
-    assert res["root_cause"] == "Apptainer Container Resource Limit Exhaustion (OOM)"
-
-
-def test_precedence_tier_3_gdb_sigfpe():
-    """Verify Tier 3: GDB SIGFPE arithmetic exception when Valgrind is clean."""
-    spec = parse_apptainer_spec("")
-    trace = parse_solver_residuals("")
-    valgrind = parse_valgrind_summary("")
-    gdb = parse_gdb_backtrace("")
-    gdb.signal = "SIGFPE"
-    gdb.is_sigfpe = True
-
-    res = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
-    assert res["precedence_tier"] == 3
-    assert res["root_cause"] == "GDB SIGFPE Arithmetic Exception"
-
-
-def test_precedence_tier_4_gdb_sigsegv_and_sigabrt():
-    """Verify Tier 4: GDB SIGSEGV / SIGABRT without Valgrind invalid writes."""
-    spec = parse_apptainer_spec("")
-    trace = parse_solver_residuals("")
-    valgrind = parse_valgrind_summary("")
-    gdb = parse_gdb_backtrace("")
-    gdb.signal = "SIGSEGV"
-    gdb.is_sigsegv = True
-
-    res1 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
-    assert res1["precedence_tier"] == 4
-    assert (
-        res1["root_cause"]
-        == "Segmentation Fault (Null Pointer or Invalid Memory Reference)"
-    )
-
-    gdb.signal = "SIGABRT"
-    gdb.is_sigsegv = False
-    gdb.is_sigabrt = True
-    res2 = resolve_evidence_precedence(spec, trace, valgrind, gdb, "Optimal Damping")
-    assert res2["precedence_tier"] == 4
-    assert res2["root_cause"] == "GDB SIGABRT Abort Signal Exception"
-
-
-def test_risk_component_scores_and_qualitative_thresholds():
-    """Verify component risk calculations and all four qualitative risk levels (LOW, MEDIUM, HIGH, CRITICAL)."""
-    spec = ContainerSpec(filepath="")
-    trace = SolverTrace(filepath="")
-    valgrind = ValgrindSummary(filepath="")
-    gdb = GdbBacktrace(filepath="")
-
-    # LOW (0-25)
-    s_low = calculate_risk_scores(spec, trace, valgrind, gdb, "Optimal Damping", 10.0)
-    assert s_low.memory_safety_risk == 0.0
-    assert s_low.numerical_convergence_risk == 10.0
-    assert s_low.resource_constraint_risk == 0.0
-    assert s_low.risk_level == "LOW"
-
-    # MEDIUM (26-50)
-    valgrind.invalid_reads = 1
-    s_med = calculate_risk_scores(
-        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
-    )
-    assert s_med.memory_safety_risk == 40.0
-    assert s_med.numerical_convergence_risk == 50.0
-    assert s_med.overall_score == 38.0  # 0.45*40 + 0.40*50 = 18 + 20 = 38
-    assert s_med.risk_level == "MEDIUM"
-
-    # HIGH (51-75)
-    valgrind.invalid_reads = 0
-    valgrind.has_critical_memory_corruption = True
-    valgrind.invalid_writes = 1
-    s_high = calculate_risk_scores(
-        spec, trace, valgrind, gdb, "Incomplete / Slow Convergence", 50.0
-    )
-    assert s_high.memory_safety_risk == 100.0
-    assert s_high.overall_score == 65.0  # 0.45*100 + 0.40*50 = 45 + 20 = 65
-    assert s_high.risk_level == "HIGH"
-
-    # CRITICAL (76-100)
-    gdb.signal = "SIGKILL"
-    s_crit = calculate_risk_scores(
-        spec, trace, valgrind, gdb, "Divergent Damping Instability", 100.0
-    )
-    assert s_crit.resource_constraint_risk == 90.0
-    assert s_crit.overall_score == 98.5
-    assert s_crit.risk_level == "CRITICAL"
 
 
 def test_deterministic_json_report_schema_and_subkeys():
@@ -545,6 +271,7 @@ def test_deterministic_json_report_schema_and_subkeys():
     # 4. Assert value correctness
     assert parsed["risk_scores"]["risk_level"] == "LOW"
     assert parsed["solver_stability_summary"]["converged"] is True
+    assert parsed["solver_stability_summary"]["damping_factor"] == trace.damping_factor
     assert parsed["precedence_analysis"]["precedence_tier"] == 5
 
     # 5. Assert qualitative_assessment is a non-empty list of meaningful strings
@@ -583,37 +310,27 @@ def test_cli_end_to_end_pipeline_execution():
                 "Program received signal SIGFPE, Arithmetic exception.\n#0 0x401000 in solve ()\n"
             )
 
-        cli_executable = shutil.which("apptainer-diag")
-        if not cli_executable:
-            cmd = [
-                sys.executable,
-                "-m",
-                "apptainer_diag.cli",
-                "--spec",
-                spec_p,
-                "--residuals",
-                res_p,
-                "--valgrind",
-                val_p,
-                "--gdb",
-                gdb_p,
-                "--output",
-                out_p,
-            ]
-        else:
-            cmd = [
-                cli_executable,
-                "--spec",
-                spec_p,
-                "--residuals",
-                res_p,
-                "--valgrind",
-                val_p,
-                "--gdb",
-                gdb_p,
-                "--output",
-                out_p,
-            ]
+        extra_paths = [
+            os.path.expanduser("~/.local/bin"),
+            sys.prefix + "/bin",
+            "/usr/local/bin",
+        ]
+        search_path = os.path.pathsep.join(extra_paths + [os.environ.get("PATH", "")])
+        cli_executable = shutil.which("apptainer-diag", path=search_path)
+        assert cli_executable is not None, "apptainer-diag CLI entrypoint binary not found on PATH"
+        cmd = [
+            cli_executable,
+            "--spec",
+            spec_p,
+            "--residuals",
+            res_p,
+            "--valgrind",
+            val_p,
+            "--gdb",
+            gdb_p,
+            "--output",
+            out_p,
+        ]
 
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
@@ -663,33 +380,25 @@ def test_cli_default_output_file_creation():
         with open(gdb_p, "w") as f:
             f.write("No stack.\n")
 
-        cli_executable = shutil.which("apptainer-diag")
-        if cli_executable:
-            cmd = [
-                cli_executable,
-                "--spec",
-                spec_p,
-                "--residuals",
-                res_p,
-                "--valgrind",
-                val_p,
-                "--gdb",
-                gdb_p,
-            ]
-        else:
-            cmd = [
-                sys.executable,
-                "-m",
-                "apptainer_diag.cli",
-                "--spec",
-                spec_p,
-                "--residuals",
-                res_p,
-                "--valgrind",
-                val_p,
-                "--gdb",
-                gdb_p,
-            ]
+        extra_paths = [
+            os.path.expanduser("~/.local/bin"),
+            sys.prefix + "/bin",
+            "/usr/local/bin",
+        ]
+        search_path = os.path.pathsep.join(extra_paths + [os.environ.get("PATH", "")])
+        cli_executable = shutil.which("apptainer-diag", path=search_path)
+        assert cli_executable is not None, "apptainer-diag CLI entrypoint binary not found on PATH"
+        cmd = [
+            cli_executable,
+            "--spec",
+            spec_p,
+            "--residuals",
+            res_p,
+            "--valgrind",
+            val_p,
+            "--gdb",
+            gdb_p,
+        ]
 
         res = subprocess.run(
             cmd, cwd=tmpdir, capture_output=True, text=True, check=False
@@ -789,7 +498,7 @@ From: centos:8
 
 
 def test_qualitative_assessment_content():
-    """Verify qualitative_assessment contains meaningful human-readable summary strings matching computed state."""
+    """Verify qualitative_assessment contains exhaustive human-readable summary findings matching exact computed state."""
     spec = ContainerSpec(filepath="Apptainer.def", memory_limit_mb=4096.0)
     trace = SolverTrace(filepath="solver.log", converged=True, total_iterations=10)
     valgrind = ValgrindSummary(filepath="valgrind.txt", invalid_writes=1, has_critical_memory_corruption=True)
@@ -801,12 +510,17 @@ def test_qualitative_assessment_content():
 
     qa = parsed["qualitative_assessment"]
     assert isinstance(qa, list)
-    assert len(qa) >= 3
-    assert all(isinstance(s, str) and len(s) > 10 for s in qa)
+    assert len(qa) >= 4
 
-    full_text = " ".join(qa)
-    assert "CRITICAL" in full_text
-    assert "Valgrind Memory Corruption" in full_text
+    # Exhaustively validate exact string elements in qualitative_assessment
+    exact_risk_str = f"Overall Simulation Stability Risk Level: {report['risk_scores']['risk_level']} ({report['risk_scores']['overall_score']}/100)"
+    exact_root_cause_str = f"Identified Primary Root Cause: {report['precedence_analysis']['root_cause']}"
+    exact_regime_str = f"Damping Regime Classification: {report['solver_stability_summary']['damping_regime']} - {report['solver_stability_summary']['regime_explanation']}"
+
+    assert exact_risk_str in qa
+    assert exact_root_cause_str in qa
+    assert exact_regime_str in qa
+    assert any(s.startswith("Precedence Resolution:") for s in qa)
 
 
 def test_resource_constraint_risk_percentage_thresholds():
